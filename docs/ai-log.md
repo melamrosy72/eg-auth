@@ -189,3 +189,77 @@
 - Route guards, `AuthProvider`, `ApiError` normalisation and the refresh interceptor are Phase 5.
 - The local `server/.env` has `FRONTEND_ORIGINS=http://localhost:3000`, so client POSTs through the Vite proxy get 403 until that value includes `http://localhost:5173`.
 - All Phase 4 files are uncommitted.
+
+## Phase 5 — Client auth (2026-10-17)
+### Generated
+- shadcn components via `npx shadcn@4.21.5 add input label card field alert sonner -y`: `src/components/ui/{input,label,card,field,alert,sonner,separator}.tsx` (`separator` is a dependency of `field`). Generated files are unedited. `form` resolves to no files for the `base-nova` style, so `field` is used.
+- `src/lib/http.ts`: `ApiError` type and `toApiError()` (network failures → status 0; non-Axios errors are rethrown).
+- `src/features/auth/`: `api.ts` (`SafeUser`, `authApi`), `interceptor.ts` (refresh interceptor), `auth-context.ts` (`AuthState`, `useAuth`), `AuthProvider.tsx`, `route-guards.tsx` (`ProtectedRoute`, `PublicOnlyRoute`, spinner, retry panel), `schemas.ts` (`PASSWORD_RULES`, `MESSAGES`, `signInSchema`, `signUpSchema`), `server-errors.ts` (`reportServerError`), `form-fields.tsx` (`FormField`, `PasswordInput`, `PasswordChecklist`, `FormAlert`, `SubmitButton`), `SignInForm.tsx`, `SignUpForm.tsx`.
+- Pages: `SignInPage`, `SignUpPage`, `AppPage` (`<h1>Welcome to the application.</h1>`, `Signed in as {name}`, Logout with pending state). `router.tsx` wraps the routes in the guards as layout routes; `main.tsx` adds `AuthProvider` and `<Toaster theme="light" />`.
+- Tests: `src/test/fake-adapter.ts` (scripted Axios adapter, `specs/06` §2), `src/features/auth/interceptor.test.ts` (item 9), `src/features/auth/AuthProvider.test.tsx` (items 7, 8, 10, 11, StrictMode single refresh, sessionEpoch, fail-open/fail-closed guards, signed-in redirect).
+- Dependencies: `sonner` 2.0.8 and `next-themes` 0.4.6 (installed by the shadcn CLI, then pinned exactly; both have no dependencies and no install scripts; published 2026-08-09 and 2025-03-11); `zod` ^4.6.7 (same version as the server); `@hookform/resolvers` ^5.9.1 (published 2026-08-17; brings `@standard-schema/utils` 0.3.0); `react-hook-form` pinned exactly to 7.89.0. `cn` stayed at 0.4.0.
+### Decisions
+- Principle for the route guards (user's review decision): **public pages fail open, protected pages fail closed.** On a `/me` error (5xx, 429, network) `PublicOnlyRoute` renders the form, while `ProtectedRoute` shows the retry panel. Both show the spinner while loading.
+- The single-flight refresh promise is module-level, not per interceptor install: Axios fixes a request's interceptor chain when the request starts, so under StrictMode the first mount's `/me` still runs through the ejected handler. A mutation test (per-install promise) failed the StrictMode test with two refreshes.
+- The interceptor is installed in an `AuthProvider` effect declared before the `/me` effect and ejected on cleanup.
+- sessionEpoch is bumped by every `loadMe()`, by sign-in/sign-up success, at the start of logout, and by `onSessionExpired`. The StrictMode second mount's `loadMe()` therefore makes the first `/me` stale; no effect cleanup is needed.
+- `logout()` clears the state in `finally` and lets the error reach the caller; `AppPage` catches it and shows the toast `Couldn't reach the server. You may still be signed in on this device. Please try again.` (wording from the Phase 5 review; it was first the generic `Something went wrong, please try again`). Auth is cleared either way (`specs/01` §6).
+- Navigation after signin/signup is done by `PublicOnlyRoute`: when the status becomes `authenticated` it renders `<Navigate to={state.from ?? '/app'} replace />` (`specs/01` §3). The forms don't call `navigate()`, which avoids racing the guard. `from` is read only from router history state (set by `ProtectedRoute`), never from the URL or a query parameter.
+- Error normalisation is a `toApiError()` helper called in `catch` blocks, not a response interceptor, so the refresh interceptor sees the raw `AxiosError` and retried requests are not normalised twice.
+- Email schema: `z.string().trim().toLowerCase().pipe(z.email().max(254))`. A node check showed that `z.email().trim()` runs the format check before trimming and rejects `"  A@X.com "`.
+- Signup password: one `superRefine` that runs every `PASSWORD_RULES` check and picks the min/max length message by code-point count, like the server DTO. Signin password: `min(1)` plus a code-point `refine` for the 128 maximum, with no policy check.
+- **Dependency minimum age:** `react-hook-form` is pinned exactly to 7.89.0 (published 2026-09-26, 21 days old) instead of `latest` 7.90.0, because 7.90.0 was 6 days old (published 2026-10-11). Same policy as `cn@0.4.0` in Phase 4.
+- Pages are lazy-loaded with `React.lazy` inside one `<Suspense fallback={<FullScreenSpinner />}>` in `router.tsx`. The guards, `AuthProvider` and the interceptor stay in the main bundle, so the `/me` check starts before any page chunk loads. `chunkSizeWarningLimit` is unchanged.
+- `<Toaster theme="light" />` at the usage site in `main.tsx` (user's review decision); the generated `sonner.tsx` is unedited.
+- The password checklist row for "special" reads `At least one special character (space counts)`, so the whitespace rule from `specs/04` §1 is visible to users.
+- `ajv-formats` 2.1.1 is now hoisted to the top of `node_modules`. It is `devOptional`: needed by the shadcn CLI, and it also matches an optional peer of `@hookform/resolvers`. Nothing in `src` or the build imports it.
+### Corrections received
+- Step A review (all done):
+  1. `PublicOnlyRoute` must fail open: render the form on a `/me` error; `ProtectedRoute` keeps the retry panel. Tests updated (`/signin` and `/signup` with `/me` 500 render the form); principle logged above.
+  2. Confirm that `from` comes only from router state. Confirmed: `useLocation().state`, set only by `ProtectedRoute`'s `<Navigate state={{ from: location }}>`; there are no URL or query reads.
+  3. `<Toaster theme="light" />` at the usage site. Done.
+  4. Keep the throwaway tests: split into `interceptor.test.ts` and `AuthProvider.test.tsx` with a shared `src/test/fake-adapter.ts`; the 2 lint warnings (`react(globals)`, reassigning an outer variable from a probe component) were fixed by rendering the status into the DOM and recording logout rejections from an event handler.
+- Phase 5 review (all done):
+  1. The logout-failure toast now reads `Couldn't reach the server. You may still be signed in on this device. Please try again.` README gained a `Known limitations` section: HttpOnly cookies can't be cleared client-side, so a failed logout request leaves the session active until expiry.
+  2. Bundle: report the gzipped size and the top modules, lazy-load the pages and keep the guards eager, and don't raise `chunkSizeWarningLimit`. Done; the main chunk dropped below 500 kB, so no README note is needed.
+  3. Log the `react-hook-form` pin and its policy. Done under Decisions.
+### Commands run
+- `npx shadcn@4.21.5 add form --dry-run` → no files; `npx shadcn@4.21.5 add input label card field alert sonner --dry-run` → 7 files, dependencies `cn`, `sonner`, `next-themes`.
+- `npx shadcn@4.21.5 add input label card field alert sonner -y` → 7 files; `npm install -E sonner@2.0.8 next-themes@0.4.6`; `npm install zod@^4.6.7 @hookform/resolvers@^5.9.1`; `npm install -E react-hook-form@7.89.0` (npm 11.21.1). The lockfile keeps 26 `libc` fields. The shadcn CLI's own `zod` 3.25.76 (dev) moved to nested `node_modules`.
+- `npm audit --omit=dev` → 0 vulnerabilities; `npm audit` → 7 high (the shadcn CLI chain, unchanged from Phase 4).
+- Step A: `npm run lint` → exit 0, `npm run typecheck` → exit 0, `npm test` → 3 files, 18 passed, `npm run build` → exit 0. Mutation checks (each reverted): a per-install refresh promise → StrictMode test failed; no epoch check on `/me` success → epoch test failed; clearing auth on any refresh failure → 3 failed (503, 429, network).
+- Final: `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 4 files, 22 passed; `npm run build` → exit 0, with Vite's warning that the JS chunk is larger than 500 kB (523,499 bytes minified).
+- Browser (Claude in Chrome) against `node dist/main.js` (server) + `npx vite --port 5173 --strictPort`, React StrictMode on:
+  - `/app` without a session → `/signin`.
+  - Empty signin submit → `Please enter a valid email address` and `Password is required`, `aria-invalid="true"`, `aria-describedby` → the error ids, focus on email, no request sent.
+  - Signin with an unknown email and the password `short` (not rejected client-side) → exactly one request (`POST /auth/signin` 401, no refresh); alert `Invalid email or password` with `role="alert"`; email kept; password cleared and focused.
+  - Signup: name `"  ab  "` → `Name must be at least 3 characters`; checklist rows updated live while typing an Arabic-letter password; the toggle's label switched to `Hide password` and the input became `type="text"`; all four rows ✓ for the final password.
+  - A double-click on `Create account` sent exactly one `POST /auth/signup` (201) and landed on `/app` with `Welcome to the application.` and `Signed in as Browser Check`. The padded, mixed-case email was stored as lowercase without spaces (checked in Mongo), with an `$argon2id$` hash.
+  - `document.cookie` was empty. `localStorage`/`sessionStorage` held only keys from other software on the same origin (`amqr.*` from another local app and `JOBRIGHT_*` from a browser extension); `grep` finds no storage use in `client/src` outside the test assertion.
+  - Reloading `/app` kept the session (two `/me` 200 calls from StrictMode).
+  - Logout → `POST /auth/logout` 200 → `/signin`. Opening `/app` again → two `/me` 401 and **one** `POST /auth/refresh` 401 → `/signin`.
+  - Signup with the same email in upper case → 409 → `Email is already registered` under the email field with `aria-invalid`/`aria-describedby`, focus on email, other values kept; the password `abc 1234` passed client validation.
+  - Signin with the mixed-case email → 200 → `/app`.
+  - 429: used up the signin limit with 10 `fetch` calls (400 ×9, then 429), then submitted the form → alert `Too many attempts, please wait a minute`, values kept.
+  - API stopped: signin submit → Vite proxy 502 → toast `Something went wrong, please try again` (light theme); `/signup` → form rendered (fail open); `/app` → retry panel (fail closed). API restarted, then `Try again` → `/me` 401 → one refresh 401 → `/signin`. No console errors.
+  - Server log: `user_signed_up`, `user_signed_in`, `signin_failed`, `user_logged_out` ×2; 0 matches for `eyJ`, the test password, or `argon2id`. The test user and its 2 sessions were deleted from `easygen_auth` afterwards. Both servers were stopped.
+- Phase 5 review follow-up:
+  - Bundle sizes from `npx vite build --sourcemap`; per-package bytes from a scratchpad script that decodes the source-map mappings (it attributes 519.0 of the 523.5 kB).
+    - Before: a single chunk, 523.5 kB (gzip 168.9 kB). `react-dom` 207.2 kB, `zod` 78.0, `axios` 50.0, `react-router` 38.1, `sonner` 33.6, `react-hook-form` 31.9, `cn` 26.0, app src 20.3, `@base-ui/react` 9.4.
+    - After lazy-loading the pages: the main chunk is 392.0 kB (gzip 128.7 kB); `react-dom` 207.1 kB, `axios` 49.9, `react-router` 38.1, `sonner` 33.6, `cn` 26.0.
+    - A shared forms chunk of 126.7 kB (gzip 39.5 kB) holds `zod`, `react-hook-form` and `@hookform/resolvers`, loaded only by `/signin` and `/signup`. Rolldown named it `server-errors-*.js` after one of its modules.
+    - Each page chunk is under 2 kB. Vite printed no chunk-size warning.
+  - `router.test.tsx` switched to `findByRole`, since pages now load asynchronously. It failed once before that change: 1 failed, 21 passed.
+  - Final: `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 4 files, 22 passed; `npm run build` → exit 0, no chunk-size warning.
+### Not done / limitations
+- Not checked in the browser:
+  - the refresh-on-expired-access-token flow (the `access_token` cookie is HttpOnly and could not be deleted from the page; covered by the StrictMode test and the Phase 3 e2e tests);
+  - the 403 toast (the browser always sends the correct `Origin`);
+  - the 400 form alert (client validation blocks invalid input first);
+  - a failed logout request;
+  - 360px width;
+  - keyboard-only navigation beyond Enter to submit.
+- Form tests from `specs/06` §2 items 1–6 are Phase 6. The fake adapter and the interceptor/AuthProvider tests already exist.
+- The main chunk is 392 kB minified, more than half of it `react-dom` (207 kB). Further splitting would only move vendor code around.
+- The browser checks above ran before the pages were lazy-loaded and before the logout toast changed; neither change was rechecked in a browser by me.
+- All Phase 5 files are uncommitted.

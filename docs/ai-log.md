@@ -270,3 +270,35 @@
 - The browser checks above ran before the pages were lazy-loaded and before the logout toast changed; neither change was rechecked in a browser by me.
 - The client is committed as `21facd6`; the server cache fix is committed separately.
 - The cache fix was checked through integration tests only, not in a browser by me.
+
+## Phase 6 — Client tests (2026-10-17)
+### Generated
+- `client/src/features/auth/forms.test.tsx` (32 tests), rendering `MemoryRouter` + `AuthProvider` + `AppRoutes` + `<Toaster theme="light" />` with the real refresh interceptor and the scripted adapter:
+  - Item 1: empty signup submit shows each field's first message, focuses Name, sends nothing; 8 table cases with the exact `specs/04` §1 messages, checked through `aria-invalid` and the accessible description (`aria-describedby`); the checklist rows update while typing `مرحبا123!` (letter → length + number → special).
+  - Item 2: signin rejects a malformed email and an empty password, then sends `short`.
+  - Item 3 (both forms): after a double click the button is disabled, and exactly one request is sent.
+  - Item 4 (both forms): success → `Welcome to the application.` and `Signed in as Ann`.
+  - Item 5: signin 401 → alert `Invalid email or password`, email kept, password cleared, the only call after submit is `/auth/signin` (no refresh).
+  - Item 6: signup 409 → `Email is already registered` as the email field's description, `aria-invalid`, focus on email, other values kept.
+  - Error mapping (both forms): 400 → alert lists every message; 429 → alert; 403 → toast `Request blocked, please reload the page`; 500 / 503 / network → toast `Something went wrong, please try again`; no alert for toasts; email kept.
+  - Item 10: logout failing with 500, 503 or a network error → `/signin`, the toast `We couldn't confirm sign-out with the server. You may still be signed in on this device. Please try again.`, context `{ status: 'unauthenticated', user: null }`.
+  - Item 11: an `afterEach` asserts `localStorage` and `sessionStorage` are empty after every test in the file; one test has the signin response carry an extra `accessToken` field and asserts the context data is exactly `{ status, user }`.
+- `client/src/test/fake-adapter.ts`: a reply can now be `{ status, data }` to override the default body (needed for the 400 message list and the extra-token response). Existing tests unchanged.
+### Decisions
+- Queries are by role and label only. The context is read from a `<pre aria-label="auth state">` holding `JSON.stringify(useAuth())` (functions drop out), not a test id or an outer variable.
+- `afterEach` calls `toast.dismiss()`: sonner keeps toasts in module state and its `subscribe()` replays active toasts into a newly mounted `<Toaster>` (read in `node_modules/sonner/dist/index.mjs`). Without it, 7 tests found the previous test's toast twice.
+- A local `renderApp` in the new file instead of sharing the one in `AuthProvider.test.tsx`: that one uses `StrictMode` and a test-id path probe; changing it would touch passing tests for no gain.
+- "No token in context" (item 11) is tested as: the context holds exactly `{ status, user }`, even if a response body carries a token field. Cookies aren't visible to the fake adapter, so they aren't part of this test.
+### Corrections received
+- Logout-failure wording (user review): one message for every failure (network, 5xx), `We couldn't confirm sign-out with the server. You may still be signed in on this device. Please try again.`, replacing `Couldn't reach the server. …`. Reason: on a network error or a proxy 502/503/504 no clearing `Set-Cookie` reaches the browser, so the cookies stay; only an API-generated 500 would carry the clearing headers (the server calls `clearAuthCookies` before revoking, `server/src/auth/auth.controller.ts`), and the client doesn't branch on that. "Couldn't reach the server" was wrong for a server 500. Changed in `AppPage.tsx` (with a comment), the item 10 test (now also runs with 503), and the README `Known limitations` entry.
+### Commands run
+- `npm test` (baseline) → 4 files, 22 passed.
+- `npx vitest run src/features/auth/forms.test.tsx` → first run 7 failed, 25 passed (sonner replay, above); after `toast.dismiss()` → 32 passed.
+- Mutation 1 (requested): removed `/auth/signin` from `NO_REFRESH` in `interceptor.ts` → `npx vitest run` → 2 failed, 52 passed: `signin 401 → generic alert, email kept, password cleared, no refresh call` (new) and `/auth/signin 401 → no refresh` (existing interceptor test). Restored from a copy; `git status` shows no change to the file.
+- Mutation 2: removed `disabled={pending}` from `SubmitButton` → 2 failed, 30 passed (both double-click tests). Restored.
+- Final: `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 5 files, 54 passed; `npm run build` → exit 0.
+- After the wording change: `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 5 files, 55 passed; `npm run build` → exit 0.
+### Not done / limitations
+- jsdom only: no layout, 360px width or real focus-ring checks.
+- The new test file takes about 16 s, mostly typing with user-event.
+- Committed after the wording change, on the user's instruction.

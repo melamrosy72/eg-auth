@@ -12,7 +12,7 @@
 
 ## Known limitations
 
-- **A failed logout request leaves the session active.** Both auth cookies are `HttpOnly`, so only the server can clear them. If `POST /api/v1/auth/logout` doesn't reach the server, the client still clears its in-memory state and shows `/signin`, but the refresh cookie stays valid until it expires (7 days, or sooner if the family is revoked), and the next visit signs the user back in. The client warns: "Couldn't reach the server. You may still be signed in on this device. Please try again."
+- **A failed logout request leaves the session active.** Both auth cookies are `HttpOnly`, so only the server can clear them. If `POST /api/v1/auth/logout` fails, the client still clears its in-memory state and shows `/signin`. On a network error or a proxy 502/503/504, no clearing `Set-Cookie` reaches the browser, so the refresh cookie stays valid until it expires (7 days, or sooner if the family is revoked), and the next visit signs the user back in. Only an API-generated 500 would carry the clearing headers (the server clears the cookies before revoking the family); the client doesn't branch on that. Every failure shows the same warning: "We couldn't confirm sign-out with the server. You may still be signed in on this device. Please try again."
 
 ## Security decisions
 

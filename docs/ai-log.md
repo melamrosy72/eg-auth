@@ -223,6 +223,8 @@
   1. The logout-failure toast now reads `Couldn't reach the server. You may still be signed in on this device. Please try again.` README gained a `Known limitations` section: HttpOnly cookies can't be cleared client-side, so a failed logout request leaves the session active until expiry.
   2. Bundle: report the gzipped size and the top modules, lazy-load the pages and keep the guards eager, and don't raise `chunkSizeWarningLimit`. Done; the main chunk dropped below 500 kB, so no README note is needed.
   3. Log the `react-hook-form` pin and its policy. Done under Decisions.
+- Found by the user's manual browser check: `/me` retries returned **304** in the Network tab. Express adds ETags by default and the auth responses had no `Cache-Control`, so user data stayed in the browser's HTTP cache and was revalidated rather than refetched. Fix (server): a functional `noStore` middleware in `AuthModule`, applied with `consumer.apply(noStore).forRoutes(AuthController)`, sets `Cache-Control: no-store` and `Pragma: no-cache` on every `/api/v1/auth/*` route (signup, signin, refresh, logout, me). Middleware runs before the guards, so the guards' 401/403/429 responses carry the headers too. Express still sends a weak `ETag`; with `no-store` the browser keeps no copy and sends no `If-None-Match`, so it can't get a 304. Two integration tests were added in `test/security.e2e-spec.ts`.
+- Also from the user's manual check: the double `/me` in dev comes from React StrictMode's double mount, and single-flight produced one refresh as designed. A production build has no StrictMode double mount, so an expired access token should show `/me` 401 → refresh 200 → `/me` 200. **Verify this in Phase 7** (Compose at `:8080`).
 ### Commands run
 - `npx shadcn@4.21.5 add form --dry-run` → no files; `npx shadcn@4.21.5 add input label card field alert sonner --dry-run` → 7 files, dependencies `cn`, `sonner`, `next-themes`.
 - `npx shadcn@4.21.5 add input label card field alert sonner -y` → 7 files; `npm install -E sonner@2.0.8 next-themes@0.4.6`; `npm install zod@^4.6.7 @hookform/resolvers@^5.9.1`; `npm install -E react-hook-form@7.89.0` (npm 11.21.1). The lockfile keeps 26 `libc` fields. The shadcn CLI's own `zod` 3.25.76 (dev) moved to nested `node_modules`.
@@ -251,6 +253,10 @@
     - Each page chunk is under 2 kB. Vite printed no chunk-size warning.
   - `router.test.tsx` switched to `findByRole`, since pages now load asynchronously. It failed once before that change: 1 failed, 21 passed.
   - Final: `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 4 files, 22 passed; `npm run build` → exit 0, no chunk-size warning.
+- Cache fix (server):
+  - Mutation check: the new tests run with the middleware disabled → 2 failed, 20 passed in `security.e2e-spec.ts`. Restored → 1 failed: an extra `ETag`-absent assertion I had added, because Express still sends a weak ETag. That assertion was removed as outside the requested fix (see Corrections received).
+  - `npx prettier --write` on the two changed files.
+  - `npm run lint` → exit 0, no findings; `npm run typecheck` → exit 0; `npm test` → 6 files, 85 passed; `npm run test:e2e` → 4 files, 63 passed (61 + 2 new); `npm run build` → exit 0.
 ### Not done / limitations
 - Not checked in the browser:
   - the refresh-on-expired-access-token flow (the `access_token` cookie is HttpOnly and could not be deleted from the page; covered by the StrictMode test and the Phase 3 e2e tests);
@@ -262,4 +268,5 @@
 - Form tests from `specs/06` §2 items 1–6 are Phase 6. The fake adapter and the interceptor/AuthProvider tests already exist.
 - The main chunk is 392 kB minified, more than half of it `react-dom` (207 kB). Further splitting would only move vendor code around.
 - The browser checks above ran before the pages were lazy-loaded and before the logout toast changed; neither change was rechecked in a browser by me.
-- All Phase 5 files are uncommitted.
+- The client is committed as `21facd6`; the server cache fix is committed separately.
+- The cache fix was checked through integration tests only, not in a browser by me.

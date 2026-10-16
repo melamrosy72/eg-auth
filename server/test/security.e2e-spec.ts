@@ -1,9 +1,14 @@
 import request from 'supertest';
 import {
   AUTH,
+  cookieValue,
   expectErrorResponse,
+  logout,
   ORIGIN,
   PASSWORD,
+  refresh,
+  signin,
+  signup,
   uniqueEmail,
   useApp,
 } from './helpers.js';
@@ -72,6 +77,64 @@ describe('throttler client IP (test 21)', () => {
       .set('X-Forwarded-For', '198.51.100.77')
       .send(body);
     expectErrorResponse(res, 429);
+  });
+});
+
+describe('auth responses are not cacheable', () => {
+  const ctx = useApp();
+
+  function expectNoStore(res: request.Response) {
+    expect(res.get('Cache-Control')).toBe('no-store');
+    expect(res.get('Pragma')).toBe('no-cache');
+  }
+
+  it('signup, signin, me, refresh and logout send Cache-Control: no-store', async () => {
+    const email = uniqueEmail('nostore');
+    const up = await signup(ctx.server, {
+      name: 'No Store',
+      email,
+      password: PASSWORD,
+    });
+    expect(up.status).toBe(201);
+    expectNoStore(up);
+
+    const signedIn = await signin(ctx.server, { email, password: PASSWORD });
+    expect(signedIn.status).toBe(200);
+    expectNoStore(signedIn);
+
+    const me = await request(ctx.server)
+      .get(`${AUTH}/me`)
+      .set('Cookie', `access_token=${cookieValue(signedIn, 'access_token')}`);
+    expect(me.status).toBe(200);
+    expectNoStore(me);
+
+    const refreshed = await refresh(
+      ctx.server,
+      cookieValue(signedIn, 'refresh_token'),
+    );
+    expect(refreshed.status).toBe(200);
+    expectNoStore(refreshed);
+
+    const out = await logout(
+      ctx.server,
+      cookieValue(refreshed, 'refresh_token'),
+    );
+    expect(out.status).toBe(200);
+    expectNoStore(out);
+  });
+
+  it('error responses from guards are not cacheable either', async () => {
+    const meNoCookie = await request(ctx.server).get(`${AUTH}/me`);
+    expect(meNoCookie.status).toBe(401);
+    expectNoStore(meNoCookie);
+
+    const refreshNoCookie = await refresh(ctx.server);
+    expect(refreshNoCookie.status).toBe(401);
+    expectNoStore(refreshNoCookie);
+
+    const badOrigin = await request(ctx.server).post(`${AUTH}/signin`).send({});
+    expect(badOrigin.status).toBe(403);
+    expectNoStore(badOrigin);
   });
 });
 

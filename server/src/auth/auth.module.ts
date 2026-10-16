@@ -1,4 +1,9 @@
-import { Module } from '@nestjs/common';
+import {
+  type MiddlewareConsumer,
+  Module,
+  type NestModule,
+} from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
@@ -14,6 +19,13 @@ import {
 } from './refresh-session.schema.js';
 import { RefreshSessionService } from './refresh-session.service.js';
 import { TokenService } from './token.service.js';
+
+// Auth responses carry user data or session state: keep them out of every HTTP cache (including
+// ETag revalidation). Middleware runs before the guards, so 401/403/429 responses get it too.
+function noStore(_req: Request, res: Response, next: NextFunction) {
+  res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
+  next();
+}
 
 @Module({
   imports: [
@@ -35,4 +47,8 @@ import { TokenService } from './token.service.js';
     JwtRefreshStrategy,
   ],
 })
-export class AuthModule {}
+export class AuthModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(noStore).forRoutes(AuthController);
+  }
+}

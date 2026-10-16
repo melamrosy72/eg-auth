@@ -47,7 +47,7 @@ describe('pinoHttpOptions', () => {
     };
 
     await request(handler)
-      .post('/api/auth/signin')
+      .post('/api/v1/auth/signin')
       .set('Cookie', `access_token=${ACCESS_JWT}; refresh_token=${REFRESH_JWT}`)
       .set('Authorization', `Bearer ${ACCESS_JWT}`)
       .send({ email: 'a@x.com', password: PASSWORD })

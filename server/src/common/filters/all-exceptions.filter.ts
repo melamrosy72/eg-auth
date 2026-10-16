@@ -6,18 +6,34 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { ApiProperty } from '@nestjs/swagger';
 import type { ErrorRequestHandler, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { STATUS_CODES } from 'node:http';
 
-/** specs/03 §1 */
-export interface ErrorResponse {
-  statusCode: number;
-  error: string;
-  message: string | string[];
-  path: string;
-  timestamp: string;
-  requestId: string;
+/** specs/03 §1; a class so Swagger can document it. */
+export class ErrorResponse {
+  @ApiProperty({ example: 400 })
+  statusCode!: number;
+
+  @ApiProperty({ example: 'Bad Request' })
+  error!: string;
+
+  @ApiProperty({
+    oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+    description: 'string[] only for validation errors',
+    example: ['Please enter a valid email address'],
+  })
+  message!: string | string[];
+
+  @ApiProperty({ example: '/api/v1/auth/signup' })
+  path!: string;
+
+  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
+  timestamp!: string;
+
+  @ApiProperty({ example: '3f0c1f0e-6a3b-4b8e-9c1d-2f4a5b6c7d8e' })
+  requestId!: string;
 }
 
 /**

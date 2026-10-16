@@ -6,6 +6,8 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { OriginGuard } from './common/guards/origin.guard.js';
+import { AuthModule } from './auth/auth.module.js';
+import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { pinoHttpOptions } from './common/logger.options.js';
 import { type Env, validateEnv } from './config/env.schema.js';
 import { HealthModule } from './health/health.module.js';
@@ -36,11 +38,13 @@ const DEFAULT_THROTTLE = { ttl: 60_000, limit: 100 };
       errorMessage: 'Too many requests, please try again later',
     }),
     HealthModule,
+    AuthModule,
   ],
   providers: [
     // Global guards run in registration order (specs/02 §2).
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: OriginGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
     {
       provide: APP_PIPE,
       useValue: new ValidationPipe({

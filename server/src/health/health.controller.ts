@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -6,15 +6,17 @@ import {
 } from '@nestjs/terminus';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
+import { Public } from '../common/decorators/auth.decorators.js';
 
 @ApiTags('health')
-@Controller('health')
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,
     private readonly mongoose: MongooseHealthIndicator,
   ) {}
 
+  @Public()
   @Get()
   @SkipThrottle()
   @HealthCheck()

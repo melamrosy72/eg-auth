@@ -1,51 +1,21 @@
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import type { Connection } from 'mongoose';
-import type { Server } from 'node:http';
 import request from 'supertest';
 import { MESSAGES } from '../src/auth/dto/auth.dto.js';
 import {
   AUTH,
   cookieValue,
-  createTestApp,
+  expectErrorResponse,
   expectNoSecrets,
-  ORIGIN,
+  PASSWORD,
   setCookie,
+  signin,
+  signJwt,
+  signup,
+  uniqueEmail,
+  useApp,
 } from './helpers.js';
 
 // specs/06 §1.3 tests 1–9. Each describe gets its own app (fresh throttler) and stays
 // under the per-route limits: signup 5 / 60 s, signin 10 / 60 s.
-
-const PASSWORD = 'Example!123';
-let counter = 0;
-const uniqueEmail = (prefix: string) =>
-  `${prefix}-${Date.now()}-${++counter}@example.com`;
-
-function useApp() {
-  const ctx = {} as {
-    app: NestExpressApplication;
-    connection: Connection;
-    server: Server;
-  };
-  beforeAll(async () => Object.assign(ctx, await createTestApp()));
-  afterAll(async () => ctx.app.close());
-  return ctx;
-}
-
-function signup(server: Server, body: object) {
-  return request(server)
-    .post(`${AUTH}/signup`)
-    .set('Origin', ORIGIN)
-    .send(body);
-}
-
-function signin(server: Server, body: object) {
-  return request(server)
-    .post(`${AUTH}/signin`)
-    .set('Origin', ORIGIN)
-    .send(body);
-}
 
 function expectAuthCookies(res: request.Response) {
   const access = setCookie(res, 'access_token');
@@ -71,18 +41,6 @@ function expectAuthCookies(res: request.Response) {
   // COOKIE_SECURE=false in tests
   expect(access).not.toContain('Secure');
   expect(refresh).not.toContain('Secure');
-}
-
-function expectErrorResponse(res: request.Response, statusCode: number) {
-  expect(res.status).toBe(statusCode);
-  expect(res.body).toEqual({
-    statusCode,
-    error: expect.any(String),
-    message: expect.anything(),
-    path: expect.any(String),
-    timestamp: expect.any(String),
-    requestId: expect.any(String),
-  });
 }
 
 describe('signup (tests 1, 4)', () => {
@@ -241,17 +199,8 @@ describe(`GET ${AUTH}/me (tests 8, 9)`, () => {
     const req = request(ctx.server).get(`${AUTH}/me`);
     return cookie === undefined ? req : req.set('Cookie', cookie);
   };
-  const signAccess = (
-    payload: object,
-    options: { secret?: string; expiresIn?: number } = {},
-  ) => {
-    const config = ctx.app.get(ConfigService);
-    return ctx.app.get(JwtService).signAsync(payload, {
-      secret: options.secret ?? config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-      algorithm: 'HS256',
-      expiresIn: options.expiresIn ?? 900,
-    });
-  };
+  const signAccess = (payload: object, expiresIn?: number) =>
+    signJwt(ctx, payload, { secret: 'access', expiresIn });
 
   beforeAll(async () => {
     const res = await signup(ctx.server, {
@@ -291,10 +240,7 @@ describe(`GET ${AUTH}/me (tests 8, 9)`, () => {
   });
 
   it('8. expired token → 401', async () => {
-    const expired = await signAccess(
-      { sub: userId, token_use: 'access' },
-      { expiresIn: -10 },
-    );
+    const expired = await signAccess({ sub: userId, token_use: 'access' }, -10);
     expectErrorResponse(await me(`access_token=${expired}`), 401);
   });
 
@@ -327,23 +273,5 @@ describe(`GET ${AUTH}/me (tests 8, 9)`, () => {
       .get(`${AUTH}/me`)
       .set('Authorization', `Bearer ${accessToken}`);
     expectErrorResponse(res, 401);
-  });
-});
-
-describe('URI versioning (early part of test 25)', () => {
-  const ctx = useApp();
-
-  it(`${AUTH}/me without a cookie → 401`, async () => {
-    expectErrorResponse(await request(ctx.server).get(`${AUTH}/me`), 401);
-  });
-
-  it('unversioned /api/auth/me → 404', async () => {
-    expectErrorResponse(await request(ctx.server).get('/api/auth/me'), 404);
-  });
-
-  it('version-neutral /api/health → 200', async () => {
-    const res = await request(ctx.server).get('/api/health');
-    expect(res.status).toBe(200);
-    expect(res.body.info.mongodb.status).toBe('up');
   });
 });

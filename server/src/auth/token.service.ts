@@ -16,6 +16,17 @@ export type RefreshPayload = {
   fid: string;
 };
 
+/** Signature and expiry are checked by the caller; this checks the claims (specs/04 §4.2). */
+export function isRefreshPayload(payload: unknown): payload is RefreshPayload {
+  const p = payload as Partial<RefreshPayload> | null;
+  return (
+    p?.token_use === 'refresh' &&
+    typeof p.sub === 'string' &&
+    typeof p.jti === 'string' &&
+    typeof p.fid === 'string'
+  );
+}
+
 @Injectable()
 export class TokenService {
   constructor(
@@ -43,6 +54,14 @@ export class TokenService {
       secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }),
       algorithm: 'HS256',
       expiresIn: REFRESH_TOKEN_TTL_SECONDS,
+    });
+  }
+
+  /** For logout, which has no guard (specs/04 §4.5). Throws on a bad signature or expiry. */
+  verifyRefresh(token: string): Promise<unknown> {
+    return this.jwt.verifyAsync(token, {
+      secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }),
+      algorithms: ['HS256'],
     });
   }
 }

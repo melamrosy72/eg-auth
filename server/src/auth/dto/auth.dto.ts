@@ -109,3 +109,8 @@ export class UserResponseDto {
   @ApiProperty({ type: SafeUserDto })
   user!: SafeUserDto;
 }
+
+export class MessageResponseDto {
+  @ApiProperty({ example: 'Access token refreshed.' })
+  message!: string;
+}

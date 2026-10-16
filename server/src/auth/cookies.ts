@@ -39,7 +39,7 @@ export function setAuthCookies(
   });
 }
 
-/** Express sets an expiry in the past; used by logout and reuse detection (Phase 3). */
+/** Express sets an expiry in the past; used by logout and reuse detection. */
 export function clearAuthCookies(res: Response, secure: boolean): void {
   res.clearCookie(ACCESS_COOKIE, cookieOptions(ACCESS_COOKIE, secure));
   res.clearCookie(REFRESH_COOKIE, cookieOptions(REFRESH_COOKIE, secure));

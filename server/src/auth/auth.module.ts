@@ -6,6 +6,7 @@ import { UsersModule } from '../users/users.module.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtAccessStrategy } from './jwt-access.strategy.js';
+import { JwtRefreshStrategy } from './jwt-refresh.strategy.js';
 import { PasswordHasher } from './password-hasher.js';
 import {
   RefreshSession,
@@ -31,6 +32,7 @@ import { TokenService } from './token.service.js';
     TokenService,
     RefreshSessionService,
     JwtAccessStrategy,
+    JwtRefreshStrategy,
   ],
 })
 export class AuthModule {}

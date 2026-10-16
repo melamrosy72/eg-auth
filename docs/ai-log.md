@@ -102,3 +102,41 @@
 - Rate limits are configured but no 429 test exists yet (test 20, Phase 3).
 - Swagger UI was not opened in a browser this phase; checked via `/api/docs-json` only.
 - All Phase 2 files are uncommitted.
+
+## Phase 3 — Rotation + logout (2026-10-16)
+### Generated
+- `server/src/auth/jwt-refresh.strategy.ts`: `JwtRefreshStrategy` (`'jwt-refresh'`; reads only `req.cookies.refresh_token`; HS256; checks `token_use`, `sub`, `jti`, `fid`) and `JwtRefreshGuard` (every refresh 401 says `Session expired, please sign in again`).
+- `refresh-session.service.ts`: `claim()` (one atomic `findOneAndUpdate` with filter `{ jti, revokedAt: null, rotatedAt: null, expiresAt: { $gt: now } }`), `insert()`, `findByJti()`, `revokeFamily()` (`updateMany({ familyId, revokedAt: null }, { $set: { revokedAt: now } })`); `createFamily()` now uses `insert()`.
+- `auth.service.ts`: `refresh()` implementing `specs/04` §4.4 with one `now` per request (claim, grace comparison, revocation and the new session's `expiresAt` all use it); `logout()` (`specs/04` §4.5); shared `issueTokens()`.
+- `auth.controller.ts`: `POST /api/v1/auth/refresh` (`@Public()` + `JwtRefreshGuard`, 30 / 60 s) and `POST /api/v1/auth/logout` (`@Public()`, no guard), with Swagger contracts (refresh `refresh_token` cookie scheme; 200 rotation vs grace; 401 side effects; cookies cleared). `token.service.ts`: `isRefreshPayload()`, `verifyRefresh()`. `auth.constants.ts`: `REFRESH_THROTTLE`, `SESSION_EXPIRED`. `dto/auth.dto.ts`: `MessageResponseDto`.
+- Tests: `test/session.e2e-spec.ts` (10–18 plus deleted user on refresh), `test/security.e2e-spec.ts` (19–21, 23–25), `test/logging.e2e-spec.ts` (22). Shared helpers (`useApp`, `post`/`signup`/`signin`/`refresh`/`logout`, `signJwt`, `jwtPayload`, `newSession`, `expectErrorResponse`) moved into `test/helpers.ts`; `test/auth.e2e-spec.ts` now uses them, and its early versioning block moved into `security.e2e-spec.ts` as test 25.
+### Decisions
+- `findOneAndUpdate` uses `{ returnDocument: 'after' }` instead of the spec's `{ new: true }`: Mongoose 9 marks `new` `@deprecated` (`node_modules/mongoose/types/query.d.ts:130-136`); same behaviour.
+- Refresh uses `sub`/`fid` from the verified JWT (as written in `specs/04` §4.4), not the values stored on the session document.
+- After a failed claim, a session that exists, is not expired and not revoked, but has no `rotatedAt`, returns 401 with no side effects. This state can't follow a failed claim; the check is defensive.
+- Reuse detection: the service revokes the family and logs `refresh_token_reuse_detected` (`warn`, `userId`, `familyId`); the controller clears both cookies, then throws 401. Headers set before the throw are kept in the filter's response (verified by test 13).
+- Deleted user on refresh: the claim has already marked the token rotated; the family is revoked and 401 is returned. Cookies are not cleared (`specs/03` §5 lists only revocation).
+- Logout clears both cookies **before** revoking, so a database error (500) still sends the clearing `Set-Cookie`. Only `verifyAsync` errors are caught (`.catch(() => null)`); database errors propagate.
+- Test 14 runs as written (immediate replay). An extra test moves `rotatedAt` to 9 s ago (grace) and then 11 s ago (reuse) to pin the window size; no sleeps anywhere.
+- Test 22 lives in its own file: nestjs-pino 5 builds one module-level `pino-http` instance on first use (`node_modules/nestjs-pino/dist/esm/rootLogger.js`) and its reset hook (`__resetOutOfContextForTests`) is not exported, so the first app in a file decides the logger. Vitest isolates modules per file, so the capture app (`PARAMS_PROVIDER_TOKEN` overridden with `pinoHttpOptions({ LOG_LEVEL: 'info' })` + a `Writable`) is the only app in that file.
+- Test 23 is checked inside the shared `post()` helper: every signup/signin/refresh/logout response body in all e2e files goes through `expectNoSecrets`; `/me` bodies are checked explicitly in `auth.e2e-spec.ts`.
+- Test 20 uses invalid bodies / no cookie: the throttler is the first global guard, so 400/401 responses still count.
+### Corrections received
+- The Phase 3 prompt set watch points up front (single atomic claim with one `now`; grace 200 with no `Set-Cookie`; reuse revokes the family, clears cookies, 401, warn log; deleted user revokes the family; logout without a guard, ignoring verification errors, always 200 and clearing with the set options; refresh cookie cleared on `Path=/api/v1/auth`; time simulated through `rotatedAt`; tests 19–21 and 25; mutation check on the grace and reuse branches). All were followed; nothing else was corrected this phase.
+### Commands run
+- `npm run typecheck` → exit 0; `npm run lint` → exit 0, no findings (after removing 6 unused imports it reported once).
+- First `npm run test:e2e` → 60 passed, 1 failed (test 22 captured no output: the nestjs-pino singleton above). After moving it to its own file → 4 files, 61 passed.
+- Mutation check (each reverted; `npx vitest run --config ./vitest.config.e2e.ts`):
+  - M1 grace window disabled (elapsed compared against `-1`) → 3 failed (14, 14 edges, 15).
+  - M2 `REFRESH_REUSE_GRACE_SECONDS` 10 → 600 → 3 failed (13, 14 edges, 22).
+  - M3 reuse branch without `revokeFamily` → 2 failed (13, 14 edges).
+  - M4 reuse branch without `clearAuthCookies` → 2 failed (13, 14 edges).
+  - M5 reuse branch returns `grace` → 3 failed (13, 14 edges, 22). The first attempt did not apply (match text predated Prettier's reformat; it reported 61 passed); rerun with the right text.
+  - M6 claim filter without `rotatedAt: null` → 5 failed (13, 14, 14 edges, 15, 22).
+- After restoring: `npm run lint` → exit 0; `npm run typecheck` → exit 0; `npm test` → 6 files, 85 passed; `npm run test:e2e` → 4 files, 61 passed (21 before this phase; 40 new or moved); `npm run build` → exit 0.
+- Smoke: `NODE_ENV=production LOG_LEVEL=info MONGODB_URI=…/easygen_auth_test node dist/main.js` + curl: signup 201; refresh 200 with both cookies (`refresh_token … Path=/api/v1/auth … HttpOnly; SameSite=Strict`); replaying the old refresh token immediately → 200 with no `Set-Cookie`; logout 200 with `access_token=; Path=/; Expires=Thu, 01 Jan 1970 …; HttpOnly; SameSite=Lax` and `refresh_token=; Path=/api/v1/auth; Expires=Thu, 01 Jan 1970 …; HttpOnly; SameSite=Strict`; logout without `Origin` → 403. `/api/docs-json`: refresh responses 200/401/403/429/500 secured by `refresh_token`; logout 200/403/429/500. Server log had `user_signed_up`, `session_rotated`, `user_logged_out`, and 0 matches for `eyJ` or the password. Server stopped afterwards.
+### Not done / limitations
+- No unit tests for `AuthService.refresh`/`logout`: `specs/06` §1.3 places these behaviours in integration tests, which run against real Mongo.
+- The grace boundary itself (exactly 10 s, `<=` vs `<`) is not testable without a controllable clock; the 9 s / 11 s test pins the window size only.
+- Swagger UI was not opened in a browser this phase; checked via `/api/docs-json` only.
+- All Phase 3 files are uncommitted.

@@ -37,7 +37,8 @@ Priority order:
 - Password hashing: Argon2id via the `argon2` package.
 - Auth: `@nestjs/jwt`, `@nestjs/passport`, `passport`, `passport-jwt`.
 - Required packages: `@nestjs/config` + `zod` (env validation through `ConfigModule.forRoot({ validate })`; no `joi`), `nestjs-pino` + `pino-http` (`pino-pretty` as a dev dependency), `helmet`, `cookie-parser`, `@nestjs/throttler`, `@nestjs/terminus`, `@nestjs/swagger`.
-- Tests: Jest and Supertest against a real, isolated MongoDB instance.
+- Tests: Vitest and Supertest against a real, isolated MongoDB instance. (NestJS 12 is ESM-only and `nest new` scaffolds Vitest; Jest would need experimental ESM mode.)
+- Lint: the `nest new` scaffold default (oxlint).
 
 ### Runtime, proxy, CI
 - Docker Compose services: `mongo`, `server`, `client` (Nginx serves the Vite build and proxies `/api/`).

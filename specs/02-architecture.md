@@ -97,7 +97,7 @@ Implementation:
 - `config/env.schema.ts` exports `envSchema` (a `z.object`) and `type Env = z.infer<typeof envSchema>`.
 - `ConfigModule.forRoot({ isGlobal: true, validate: validateEnv })`. `validateEnv(config)` calls `envSchema.safeParse(config)` on the **`config` argument**, not on `process.env`: `@nestjs/config` calls `validate` with the `.env` file values merged under `process.env` *before* it copies them into `process.env`. On failure it throws an error listing **only variable names and issue messages**, never the received values.
 - Inject config as `ConfigService<Env, true>` so `get()` is typed.
-- **No application code outside `server/src/config/` reads `process.env`.** Typed values come only from `ConfigService<Env, true>`; after validation, `process.env` holds stringified values (e.g. `"false"`, or a joined origin list). Test helpers may *set* environment variables before booting the app.
+- **No application code outside `server/src/config/` reads `process.env`.** Typed values come only from `ConfigService<Env, true>`; after validation, `process.env` holds only raw or stringified values (e.g. `"false"`), and non-primitive values such as the parsed origin list are not copied into it at all. Test helpers may *set* environment variables before booting the app.
 - **Booleans:** never use `z.coerce.boolean()`, because it turns the string `"false"` into `true`. Use `z.enum(['true','false']).transform(v => v === 'true')` (or `z.stringbool()` if the installed Zod is v4).
 - **Numbers:** `z.coerce.number().int()` with range checks.
 - **`FRONTEND_ORIGINS`:** `.transform()` splits on commas and trims each entry. Every entry is checked with `new URL(o).origin === o`, so paths, trailing slashes, and `*` are rejected.

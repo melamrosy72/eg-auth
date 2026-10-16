@@ -1,6 +1,6 @@
 # 06 — Testing and Acceptance
 
-## 1. Backend (Jest and Supertest)
+## 1. Backend (Vitest and Supertest)
 
 ### 1.1 Test infrastructure
 - Integration tests run against a **real** MongoDB at `MONGODB_URI`.

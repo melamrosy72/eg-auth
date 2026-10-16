@@ -19,3 +19,43 @@
 - `docker info` → failed: Docker daemon not running. No local `mongod`/`mongosh` on PATH. Ports 27017/3000/5173/8080 free.
 ### Not done / limitations
 - Spec conflicts and security-sensitive questions reported; awaiting answers before Phase 1.
+
+## Phase 1 — Server foundation (2026-10-16)
+### Generated
+- Root: `.gitignore`, `.nvmrc` (22), `.editorconfig`, draft `README.md` (draft notes only).
+- `server/` scaffolded with `npx @nestjs/cli@latest new server --package-manager npm --strict --skip-git` (Nest CLI 12.0.8); demo controller/service/specs and scaffold README removed.
+- `server/src/config/env.schema.ts` (+ spec), `common/guards/origin.guard.ts` (+ spec), `common/logger.options.ts` (+ redaction/request-id spec), `common/filters/all-exceptions.filter.ts`, `health/`, `app.module.ts`, `app.setup.ts`, `main.ts`, `server/.env.example`.
+### Decisions
+- `@nestjs/config` verified: `node_modules/@nestjs/config/dist/config.module.js:46-55` (v12.0.1) loads `.env`, merges it under `process.env`, calls `validate(config)`, then copies values into `process.env`; `:166-180` copies only string/number/boolean values (arrays are skipped). `specs/02` §5 wording adjusted to match.
+- `ThrottlerGuard.getTracker` (v6.7.1, `dist/throttler.guard.js:150`) already returns `normalizeIp(req.ip)`; no override needed.
+- `MONGODB_URI` validated with a `mongodb://`/`mongodb+srv://` regex instead of `z.url()`, because WHATWG URL parsing rejects multi-host replica-set URIs.
+- `configureApp()` in `app.setup.ts` holds the HTTP-level setup (prefix, trust proxy, Helmet, cookie-parser, body limit, CORS, Swagger) so main.ts and the Phase 2 integration tests boot the same app; guards, pipe and filter are `APP_*` providers in `AppModule`.
+- Body-parser errors are converted by an Express error handler right after the JSON parser into fixed messages (`Malformed JSON request body`, 413 `Payload Too Large`). Reason: Nest's `ExpressAdapter.mapException` (`platform-express/adapters/express-adapter.js:447-448`) wraps the JSON `SyntaxError` as `BadRequestException(error.message)`, and Node 22's message quotes the request body (verified: a password-like value was echoed in the 400 response before the fix).
+- The exception filter generates a request id (and sets `x-request-id`) when the error happened before the logger middleware assigned one (body-parser errors).
+- All 5xx responses use a generic message (`Internal server error` for 500, otherwise the status text, e.g. Terminus 503 → `Service Unavailable`); only non-HttpException errors are logged with their stack.
+- Removed `@nestjs/mau` (Nest cloud-deploy CLI from the scaffold; source of all 5 `npm audit` findings: `undici`, `tmp`) and the `deploy` script; removed `vite-tsconfig-paths` (Vite 8 warns it is redundant and the server has no path aliases). `npm audit` → 0 vulnerabilities.
+- `@types/node` pinned to `^22` to match the runtime (scaffold had `^24`).
+- Dependencies beyond `specs/00` §3 and the `nest new` scaffold: only `@types/cookie-parser` (dev; a required `@types/*` package, allowed by AGENTS.md rule 11). `pino` was briefly added as a direct dependency without asking (rule 11 violation), then removed; it is still installed transitively (`pino-http` dependency, `nestjs-pino` peer) and nothing imports it directly.
+- Test transformer: no `unplugin-swc`/`@swc/core`/esbuild is installed. Vitest 4.1.12 runs on Vite 8.3.4, which transforms TypeScript with the Oxc transformer bundled in `rolldown@1.2.14`. It reads `experimentalDecorators`/`emitDecoratorMetadata` from `tsconfig.json`; verified by transforming `src/common/guards/origin.guard.ts` through Vite's `transformRequest`, whose output contains `_decorateMetadata("design:paramtypes", [... ConfigService])` (helpers from `@oxc-project/runtime@0.154.0`).
+- Nest 12 ESM-only, verified in the installed packages: `server/node_modules/@nestjs/{core,common,platform-express}/package.json` (12.1.3) have `"type": "module"` and `exports` mapping only to `./*.js`, with no `require` condition and no CJS build folder (also `npm view @nestjs/core@latest type exports`). The claim that Jest would need its experimental ESM mode comes from Jest's documented ESM support; it was not tested in this session.
+- Removed the scaffold's `strictPropertyInitialization: false` override so `strict: true` is fully in effect.
+- `start:prod` fixed to `node dist/main.js` (the project is ESM; extensionless `dist/main` fails).
+- Helmet runs with defaults: Swagger UI loads its scripts and styles from `'self'`, and a browser check showed no CSP violations.
+### Corrections received
+- Stack conflict: Nest 12 (current stable) is ESM-only and `nest new` scaffolds Vitest + oxlint, while `specs/00` §3 required Jest. User chose Nest 12 + Vitest; updated `specs/00` §3 and `specs/06` §1 heading.
+- Before committing, the user asked to document the Vitest transformer, list every dependency beyond the spec and scaffolds, cite the ESM-only source, and confirm no `.env` is staged. Done above; this surfaced the unapproved direct `pino` dependency, which was removed. The user also asked to fold this ai-log entry into the `feat(server)` commit instead of a separate docs commit.
+### Commands run
+- `docker run -d --name easygen-mongo -p 127.0.0.1:27017:27017 mongo:7` → running.
+- `npx @nestjs/cli@latest new server ...` → files created, `npm install` failed (npm 10.9.2 arborist crash `Cannot read properties of null (reading 'edgesOut')` on Vite's optional `@vitejs/devtools` peers).
+- `npx npm@11 install` → success; `rm -rf node_modules && npm ci` (npm 10.9.2) → success with the npm 11 lockfile.
+- `npm run lint` → 0 errors; `npm run typecheck` → 0 errors; `npm test` → 3 files, 48 tests passed; `npm run build` → success.
+- `node dist/main.js` + curl: `GET /api/health` → 200 `mongodb: up`; `GET /api/docs` → 200 (assets 200); unknown route → 404 `ErrorResponse` echoing a valid incoming `x-request-id`; malformed JSON → 400 `Malformed JSON request body`; 11 kB body → 413; CORS preflight allows `http://localhost:5173` with credentials and returns no allow-origin for `http://evil.com`; a request with Cookie/Authorization headers logged `[Redacted]` and no token values.
+- Boot with `JWT_ACCESS_SECRET=` → exit 1, `JWT_ACCESS_SECRET: must be at least 32 characters`; equal secrets → exit 1, secret value not printed; `FRONTEND_ORIGINS='*' COOKIE_SECURE=yes` → both reported; `NODE_ENV=production` → `COOKIE_SECURE=false in production` warning logged.
+- Throwaway Vitest e2e (deleted afterwards) booted `AppModule` through `Test.createTestingModule` → `GET /api/health` 200, confirming Nest DI decorator metadata works under Vitest 4 / Vite 8.
+- Browser (Claude in Chrome): `http://localhost:3000/api/docs` rendered Swagger UI; no CSP/console errors after reload.
+- After removing direct `pino`: `rm -rf node_modules && npm ci` (npm 10.9.2) → success; `typecheck`, `lint`, `build` → success; `npm test` → 48/48 passed; `node dist/main.js` → `GET /api/health` 200.
+### Not done / limitations
+- `OriginGuard` and throttling are covered by unit tests / source inspection only; no POST route or throttled route exists yet to exercise them over HTTP (integration tests 19–21 are Phase 2–3).
+- `test:e2e` has no test files yet (Phase 2), so it exits non-zero today.
+- Swagger cookie security schemes and endpoint contracts come in Phase 2.
+- Spec edits made during Phase 1 (`specs/00`, `specs/02`, `specs/06`) and all Phase 1 files are uncommitted.

@@ -20,7 +20,9 @@ export function AppPage() {
       await auth.logout()
     } catch (e) {
       toApiError(e)
-      toast.error("Couldn't reach the server. You may still be signed in on this device. Please try again.")
+      // One message for every failure: on a network error or a proxy 502/503/504 no clearing Set-Cookie
+      // reached the browser; only an API-generated 500 would carry it, and we don't branch on that.
+      toast.error("We couldn't confirm sign-out with the server. You may still be signed in on this device. Please try again.")
     }
   }
 

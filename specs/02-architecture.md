@@ -59,10 +59,11 @@
 3. `JwtAuthGuard`: **protected by default**. Opt out with `@Public()`. The public routes are signup, signin, refresh (it uses the refresh guard instead), logout, and health.
 
 ### HealthModule
-`GET /api/health` uses Terminus to ping Mongoose. It is excluded from throttling with `@SkipThrottle()`. It must not expose connection strings.
+`GET /api/health` uses Terminus to ping Mongoose. It is excluded from throttling with `@SkipThrottle()`. It must not expose connection strings. It is version-neutral: `@Controller({ path: 'health', version: VERSION_NEUTRAL })`, so it is served at `/api/health` and not under `/api/v1`.
 
 ### Bootstrap (`main.ts`)
 - Global prefix: `api`.
+- URI versioning: `app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' })`. Every controller is served under `/api/v1` unless it is marked `VERSION_NEUTRAL` (health).
 - Pino logger: `bufferLogs: true`, `app.useLogger(app.get(Logger))`.
 - `helmet()`, configured so that Swagger UI works without disabling protections wholesale.
 - `cookie-parser`.
@@ -71,7 +72,7 @@
 - CORS: `origin` is the exact `FRONTEND_ORIGINS` list, with `credentials: true`. Never use `*`.
 - Global `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })`.
 - Global exception filter (`04` §7).
-- Swagger at `/api/docs` when `SWAGGER_ENABLED=true`.
+- Swagger at `/api/docs` (version-neutral) when `SWAGGER_ENABLED=true`, with document version `1.0`.
 - `enableShutdownHooks()`.
 
 ## 3. Frontend responsibilities
@@ -80,13 +81,13 @@ See `05`. Key points:
 - one Axios instance;
 - an in-memory `AuthProvider`;
 - a single-flight refresh interceptor;
-- route guards backed by `/api/auth/me`.
+- route guards backed by `/api/v1/auth/me`.
 
 ## 4. URL conventions
 
-- All API routes are under `/api`. The browser always calls relative `/api/...` URLs.
-- Dev: the Vite dev server (`:5173`) proxies `/api` to `http://localhost:3000`.
-- Compose: Nginx (`:8080`) serves the SPA and proxies `/api/` to `server:3000`, keeping the `/api` prefix.
+- All API routes are under `/api`. Versioned routes are under `/api/v1` (e.g. `/api/v1/auth/me`). `/api/health` and `/api/docs` are version-neutral. The browser always calls relative `/api/...` URLs.
+- Dev: the Vite dev server (`:5173`) proxies all of `/api` to `http://localhost:3000`, unchanged.
+- Compose: Nginx (`:8080`) serves the SPA and proxies all of `/api/` to `server:3000` unchanged, keeping the `/api` prefix and the version segment.
 - Swagger in dev is at `http://localhost:5173/api/docs` (through the Vite proxy, so "Try it out" sends an allowed Origin). In Compose it is at `http://localhost:8080/api/docs`.
 
 ## 5. Environment
@@ -122,7 +123,7 @@ Implementation:
 `server/.env.example` (local dev): `MONGODB_URI=mongodb://127.0.0.1:27017/easygen_auth`, `FRONTEND_ORIGINS=http://localhost:5173`, `COOKIE_SECURE=false`, `TRUST_PROXY_HOPS=0`, and placeholder secrets with a generation command in a comment (`node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`).
 
 ### Client
-- No environment variables are required. The Axios base URL is `/api`.
+- No environment variables are required. The Axios base URL is `/api/v1`.
 - `VITE_API_URL` is optional and only for non-default setups. Never put secrets in `VITE_*`.
 
 ## 6. Docker Compose and Nginx

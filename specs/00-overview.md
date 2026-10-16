@@ -48,7 +48,7 @@ Priority order:
 
 - Signup and signin pages and endpoints, with the field rules in `04` §1.
 - Protected page `/app` showing exactly `Welcome to the application.`
-- Protected `GET /api/auth/me`.
+- Protected `GET /api/v1/auth/me`.
 - Cookie-only JWT auth: 15-minute access token and 7-day **rotating** refresh token, with reuse detection and server-side revocation (`04` §4).
 - Logout that revokes the refresh-session family.
 - Rate limiting, origin/CSRF checks, Helmet, structured logs with redaction, and environment validation.

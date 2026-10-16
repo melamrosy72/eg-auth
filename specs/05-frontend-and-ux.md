@@ -57,11 +57,11 @@ Both forms share these behaviours:
 ## 5. Auth state and the Axios instance
 
 ### `lib/http.ts`: one Axios instance
-- `baseURL: import.meta.env.VITE_API_URL ?? '/api'`, `withCredentials: true`, JSON.
+- `baseURL: import.meta.env.VITE_API_URL ?? '/api/v1'`, `withCredentials: true`, JSON.
 - Normalise errors into `ApiError { status: number; message: string | string[]; requestId?: string }`. Network failures get `status: 0`.
 
 ### Refresh interceptor (response, 401 only)
-1. **Eligibility.** The request URL is **not** one of these:
+1. **Eligibility.** The request URL is **not** one of these (paths relative to the `/api/v1` base URL):
    - `/auth/signin` (a 401 here means wrong credentials, never a refresh);
    - `/auth/signup`;
    - `/auth/refresh`;

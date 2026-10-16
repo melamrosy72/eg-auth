@@ -13,9 +13,10 @@ Verify every command against the actual scripts and the Compose file. Sections:
    - `cd client && npm ci && npm run dev`, then open `http://localhost:5173`.
 5. Environment variables table (from `02` §5).
 6. Scripts for both apps, and how to run tests (the test DB name must end in `_test`).
-7. API summary and Swagger URLs (`:5173/api/docs` in dev, `:8080/api/docs` in Compose). Note that `curl` calls to POST endpoints need an `Origin` header.
+7. API summary with the base path `/api/v1` (health at `/api/health` and docs at `/api/docs` are version-neutral), and Swagger URLs (`:5173/api/docs` in dev, `:8080/api/docs` in Compose). Note that `curl` calls to POST endpoints need an `Origin` header.
 8. **Auth design:**
    - the cookie table;
+   - the refresh cookie scope `Path=/api/v1/auth` and its trade-off: minimal exposure, but a future `v2` re-scopes it and needs one re-sign-in;
    - the access/refresh lifetimes;
    - rotation with reuse detection and the grace window, with a short sequence diagram or numbered steps;
    - logout revocation per device;

@@ -101,7 +101,7 @@ RefreshSession {
 - Store only the `jti`, never the token itself. Without the refresh secret, a `jti` is useless.
 - **Signup and signin** create a new `familyId` and the first session document, then set both cookies.
 
-### 4.4 `POST /api/auth/refresh` algorithm (atomic, no transactions)
+### 4.4 `POST /api/v1/auth/refresh` algorithm (atomic, no transactions)
 
 1. `JwtRefreshStrategy` verifies the signature, expiry, and `token_use === 'refresh'`, and extracts `{ sub, jti, fid }`. Any failure → 401.
 2. Claim the token atomically:
@@ -143,10 +143,11 @@ RefreshSession {
 | Cookie | HttpOnly | SameSite | Path | Max-Age | Secure |
 |---|---|---|---|---|---|
 | `access_token` | yes | `Lax` | `/` | 900 s | `COOKIE_SECURE` |
-| `refresh_token` | yes | `Strict` | `/api/auth` | 604800 s | `COOKIE_SECURE` |
+| `refresh_token` | yes | `Strict` | `/api/v1/auth` | 604800 s | `COOKIE_SECURE` |
 
 - The refresh cookie is only ever sent by same-origin XHR, so `Strict` costs nothing and also blocks cross-site top-level navigation.
-- `Path=/api/auth` keeps the refresh cookie off every other request. It still reaches `/refresh` and `/logout`.
+- `Path=/api/v1/auth` keeps the refresh cookie off every other request. It still reaches `/refresh` and `/logout`.
+- The refresh cookie path is tied to `v1` on purpose, to keep its exposure minimal. A future `v2` would re-scope it (e.g. `/api/v2/auth`); existing refresh cookies would not reach the new path, so each user would sign in once again.
 - Clearing a cookie must use the same `path`, `sameSite`, `secure`, and `httpOnly` values it was set with. Otherwise the browser keeps it.
 - Frontend JavaScript never reads, writes, or holds either token.
 

@@ -44,7 +44,7 @@
 ### 1.3 Integration tests
 **Signup / signin / me:**
 1. Valid signup → 201 `{ user }`.
-   - `Set-Cookie` contains `access_token` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=900`) and `refresh_token` (`HttpOnly`, `SameSite=Strict`, `Path=/api/auth`, `Max-Age=604800`).
+   - `Set-Cookie` contains `access_token` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=900`) and `refresh_token` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, `Max-Age=604800`).
    - The body contains no `password`, `passwordHash`, or JWT.
 2. Invalid email / short trimmed name / each missing password category → 400 with the `ErrorResponse` shape and the exact message.
 3. Unknown body property → 400.
@@ -52,7 +52,7 @@
 5. Concurrent duplicate signups (`Promise.all` of 2) → exactly one 201 and one 409.
 6. Valid signin → 200 `{ user }` with both cookies.
 7. Wrong password and unknown email → 401 with an identical body `message`.
-8. `/api/auth/me`:
+8. `/api/v1/auth/me`:
    - no cookie → 401;
    - tampered token → 401;
    - expired token → 401;
@@ -92,6 +92,7 @@
 22. **Log redaction:** capture Pino output (inject a test destination stream) during a signin. The captured output contains no password, no cookie value, and no JWT.
 23. Responses never contain `passwordHash` or a JWT. Assert this across the bodies from the tests above.
 24. `/api/health` → 200 with `mongodb: up`.
+25. **Versioning:** `/api/v1/auth/me` without a cookie → 401; `/api/auth/me` → 404; `/api/health` → 200; `/api/v1/health` → 404.
 
 ## 2. Frontend (Vitest, React Testing Library, jsdom)
 
@@ -128,7 +129,7 @@ Both apps provide `lint`, `typecheck` (`tsc --noEmit` / `tsc -b`), `test`, and `
 - [ ] Access cookie 15 minutes and refresh cookie 7 days, with exactly the attributes in `04` §4.6.
 - [ ] Refresh rotates on every use; reuse after the grace window revokes the family; the grace window issues no cookies.
 - [ ] Logout revokes the family and clears both cookies; other devices are unaffected.
-- [ ] Routes protected by default; `/api/auth/me` returns 401 without a valid access cookie; Bearer is not accepted.
+- [ ] Routes protected by default; `/api/v1/auth/me` returns 401 without a valid access cookie; Bearer is not accepted.
 - [ ] `OriginGuard`, exact-origin CORS, Helmet, throttling with the correct client IP behind Nginx, and redacted Pino logs are all in place.
 - [ ] Every error uses `ErrorResponse` with a `requestId`.
 - [ ] Frontend: no flash of protected content; single-flight refresh; no refresh on a signin 401; no tokens in JS.

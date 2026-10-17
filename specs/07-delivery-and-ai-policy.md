@@ -2,12 +2,13 @@
 
 ## 1. README.md (project root)
 
-Verify every command against the actual scripts and the Compose file. Sections:
+Verify every command against the actual scripts and the Compose file. Commands are written for a POSIX shell (macOS, Linux, Git Bash, WSL). Sections:
 
 1. Overview and feature list.
 2. Tech stack, and the Node 22 / npm requirement.
-3. **Quick start (Docker):** `cp .env.example .env`, generate the two secrets (with the command), `docker compose up --build`, then open `http://localhost:8080`.
+3. **Quick start (Docker):** `cp .env.example .env`, generate the two secrets (with the command) and paste them into `.env`, `docker compose up --build`, then open `http://localhost:8080`. Don't redirect generated output into `.env`: Windows PowerShell 5.1's `>` writes UTF-16, which Compose can't read.
 4. **Local development:**
+   - the root `.env` from the Quick start first (Compose interpolates the whole file, `02` §6);
    - `docker compose up -d mongo`;
    - `cd server && cp .env.example .env && npm ci && npm run start:dev`;
    - `cd client && npm ci && npm run dev`, then open `http://localhost:5173`.
@@ -31,7 +32,8 @@ Verify every command against the actual scripts and the Compose file. Sections:
     - the grace-window race described in `04` §4.4;
     - `COOKIE_SECURE=false` in Compose is for local HTTP only.
 11. Project structure.
-12. Next steps (for example: a "log out all devices" UI, absolute session lifetime caps, a Redis-backed throttler, email verification).
+
+There is no "Next steps" section; the author removed it from the README.
 
 No real secrets or personal data anywhere in the README.
 
@@ -63,11 +65,16 @@ The author fills it in from `docs/ai-log.md` and their own notes. Nothing in it 
 ## 4. CI (`.github/workflows/ci.yml`)
 
 - Triggers: `push` and `pull_request` to `main`.
+- `permissions: contents: read`. A `concurrency` group `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true` cancels superseded runs.
+- Actions are pinned to full commit SHAs with a version comment (`actions/checkout` v7.0.1, `actions/setup-node` v7.0.0), following the minimum-age policy in `00` §3.
+- Both app jobs:
+  - `defaults.run.working-directory` is the app folder;
+  - Node from `node-version-file: .nvmrc` via `actions/setup-node` with `cache: npm` and `cache-dependency-path: <app>/package-lock.json` (one cache key per lockfile);
+  - install the npm from `"packageManager"` (same command as the Dockerfiles, `02` §6) before `npm ci`.
 - **`server` job:**
-  - a `mongo:7` service container on port 27017;
-  - Node 22 via `actions/setup-node` with npm cache (`cache-dependency-path: server/package-lock.json`);
+  - a `mongo:7` service container on port 27017, with a `mongosh` ping health check so steps start only once Mongo is up;
   - `npm ci` → `lint` → `typecheck` → `test` → `test:e2e` → `build`;
-  - env: `MONGODB_URI=mongodb://localhost:27017/easygen_auth_test`, CI-only dummy secrets of 32+ characters (two different values), `FRONTEND_ORIGINS=http://localhost:5173`, `COOKIE_SECURE=false`.
+  - job-level env: `MONGODB_URI=mongodb://localhost:27017/easygen_auth_test`, CI-only dummy secrets of 32+ characters (two different values), `FRONTEND_ORIGINS=http://localhost:5173`, `COOKIE_SECURE=false`.
 - **`client` job:** `npm ci` → `lint` → `typecheck` → `test` → `build`.
 - **`docker` job:** `needs: [server, client]`; run `docker compose build` with dummy JWT secrets exported as env, so the `:?` checks pass. Don't push images.
 - Any failing step fails the workflow. No deployment automation.

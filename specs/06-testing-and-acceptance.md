@@ -7,6 +7,9 @@
 - **Safety guard:** the test setup aborts unless the database name ends in `_test` (for example `mongodb://127.0.0.1:27017/easygen_auth_test`). It drops that database before the suite runs and never touches any other.
 - After the app boots, call `await connection.syncIndexes()` (or `Model.init()` for `User` and `RefreshSession`) **before any test runs**. Otherwise the duplicate-email test races index creation and becomes flaky.
 - Provide a `createTestApp()` helper that boots the real `AppModule` with test environment variables (`FRONTEND_ORIGINS=http://localhost:5173`, `COOKIE_SECURE=false`, `TRUST_PROXY_HOPS=0`).
+  - The variables are set in `test/test-env.ts`, a Vitest `setupFiles` entry that also runs in `globalSetup`, because `ConfigModule.forRoot` validates the environment when `AppModule` is imported. It forces `NODE_ENV=test` and the three values above, and defaults `MONGODB_URI` to `mongodb://127.0.0.1:27017/easygen_auth_test`, test-only secrets, and `LOG_LEVEL=silent` unless they are already set (as in CI).
+  - Integration test files run one at a time (`fileParallelism: false`): they share one real database.
+  - The log-redaction test (§1.3 test 22) lives in its own file. `nestjs-pino` builds one module-level `pino-http` instance on first use, so the first app in a file decides the logger.
   - Each `describe` block gets its own app instance, so throttler state is isolated.
   - Keep each block under the rate limits. A dedicated block tests the 429 behaviour.
 - Every unsafe-method request sends `Origin: http://localhost:5173` unless the test is checking the origin check itself.

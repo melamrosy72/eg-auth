@@ -109,9 +109,10 @@ RefreshSession {
    const claimed = await RefreshSession.findOneAndUpdate(
      { jti, revokedAt: null, rotatedAt: null, expiresAt: { $gt: now } },
      { $set: { rotatedAt: now, replacedByJti: newJti } },
-     { new: true },
+     { returnDocument: 'after' }, // Mongoose 9 deprecates `new: true`; same behaviour
    );
    ```
+   Use a single `now` for every comparison and write in the request (claim, grace check, revocation, and the new session's `expiresAt`).
 3. **If `claimed` is set:**
    - Confirm the user still exists; if not, revoke the family and return 401.
    - Insert a new session document `{ jti: newJti, familyId: fid, userId, expiresAt: now + 7d }`.
@@ -191,6 +192,9 @@ CORS:
 **Global exception filter:**
 - Produces `ErrorResponse` (`03` §1) for every error, including validation, 404, 429, and 500.
 - Unknown errors return `Internal server error` with no stack trace or database detail. The stack is logged server-side only.
+- Every 5xx uses a generic message: `Internal server error` for 500, otherwise the status text (e.g. Terminus 503 → `Service Unavailable`).
+- Body-parser errors get fixed messages from an Express error handler registered right after the JSON parser: malformed JSON → 400 `Malformed JSON request body`; other parser errors (e.g. over 10 kB → 413) → the status text. Node's own `SyntaxError` message quotes the request body, which could echo a password.
+- When an error happens before the logger assigns a request ID (body-parser errors), the filter generates one and sets `x-request-id`.
 
 **`nestjs-pino`:**
 - Request ID comes from an incoming `x-request-id` header if it is a valid UUID; otherwise generate one with `randomUUID()`.
@@ -211,5 +215,7 @@ CORS:
 ## 8. Configuration and headers
 
 - Zod env validation as described in `02` §5. Boot fails fast on invalid configuration.
-- Helmet uses deliberate settings, adjusting only what Swagger UI needs.
+- Helmet runs with its defaults. Swagger UI loads its scripts and styles from `'self'`, so no adjustment is needed (verified in a browser with no CSP violations). If a future Swagger version needs more, adjust only what it needs.
+- Every `/api/v1/auth/*` response (signup, signin, refresh, logout, me) sends `Cache-Control: no-store` and `Pragma: no-cache`, from middleware applied to `AuthController`. Middleware runs before the guards, so their 401/403/429 responses carry the headers too. Without it, Express ETags made the browser revalidate `/me` and answer from its HTTP cache (304).
+- The SPA's own headers (CSP, frame, referrer) are set by Nginx; see `02` §6.
 - Secrets live only in environment files. Example files contain placeholders only.

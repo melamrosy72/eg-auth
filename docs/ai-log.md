@@ -408,3 +408,91 @@
 - README is Phase 8; nothing in it changed this phase. The two fixed limitations had been listed only in this log, never in the README.
 - `specs/02` §6 still describes the pre-review `depends_on` and `proxy_pass`; see Corrections received.
 - Committed as a single `build(infra)` commit with this entry, on the user's instruction. It touches both `client/` and `server/` files, an exception to the one-app-per-commit rule in AGENTS.md.
+
+## Phase 8 — CI + docs + final review (2026-10-17)
+### Generated
+- `.github/workflows/ci.yml`:
+  - Runs on `push` and `pull_request` to `main`, with `permissions: contents: read`, and a concurrency group (`${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: true`).
+  - Jobs `server` (`mongo:7` service with a `mongosh` ping health check; `npm ci` → `lint` → `typecheck` → `test` → `test:e2e` → `build`), `client` (`npm ci` → `lint` → `typecheck` → `test` → `build`) and `docker` (`needs: [server, client]`, `docker compose build` with dummy secrets).
+  - Node comes from `.nvmrc`. Each job installs the npm from its `package.json` `packageManager` before `npm ci`. The npm cache is keyed per lockfile with `cache-dependency-path`.
+- `README.md` rewritten per `specs/07` §1, with a Mermaid sequence diagram of rotation, the grace window and reuse detection. It keeps the two existing sections (failed-logout limitation, dependency minimum age), folded into Known limitations and Security decisions. The author then removed section 12 (Next steps), so it has sections 1–11.
+- `AI.md`: the eight headings from `specs/07` §2 only, no prose.
+- `.gitattributes`: `* text=auto eol=lf`.
+- Specs synced to the shipped system (user request, see Corrections received):
+  - `00` §3: the npm pin and the minimum-age policy.
+  - `02` §1: layout adds `app.setup.ts`, `client/src/test/`, `.gitattributes`. `02` §2: `configureApp()`, Helmet defaults. `02` §5: the `MONGODB_URI` regex.
+  - `02` §6: restart policy, server healthcheck, client `service_healthy`, whole-file interpolation, Dockerfile npm pin and runtime-stage contents, `.dockerignore`, Nginx `resolver` + variable `proxy_pass`, `/assets/` `=404`, gzip types, SPA security headers and the sonner CSP hash with its test.
+  - `03` §1: 400 malformed JSON, 413, `no-store` and `x-request-id` cross-references.
+  - `04` §4.4: `returnDocument: 'after'`, one `now`. `04` §7: generic 5xx messages, body-parser messages, request ID for pre-logger errors. `04` §8: Helmet defaults, `Cache-Control: no-store`.
+  - `05`: the `field` component and `<Toaster>`; lazy pages; the logout-failure toast; the module-level single-flight promise; `toApiError()`; when `sessionEpoch` is bumped; `PublicOnlyRoute` navigation and fail-open, plus the fail-open/fail-closed principle.
+  - `06` §1.1: `test/test-env.ts`, serial files, the logging test in its own file.
+  - `07` §1: POSIX shell, paste secrets (no `>` redirect), root `.env` before local dev, no Next steps section. `07` §4: permissions, concurrency, SHA pins, `.nvmrc`, npm install step, per-lockfile cache, Mongo health check.
+### Decisions
+- **Actions pinned to commit SHAs** with a version comment: `actions/checkout@3d3c42e…` (v7.0.1, published 2026-07-20), `actions/setup-node@8207627…` (v7.0.0, 2026-07-14). Not `@v7`: tags can move, and `@v7` resolves to setup-node v7.1.0, published 2026-10-08 (9 days old), which the minimum-age policy used for `cn` and `react-hook-form` would reject.
+- **npm install step** is the same command as the Dockerfiles (`npm install -g "$(node -p "require('./package.json').packageManager")"`), so `package.json` stays the only place the version is written. Corepack was not used.
+- **CI env:** the server job sets `MONGODB_URI=mongodb://localhost:27017/easygen_auth_test`, two different 40+ character `ci-only-…` secrets, `FRONTEND_ORIGINS=http://localhost:5173` and `COOKIE_SECURE=false` at job level, so unit and e2e steps see the same values. `test/test-env.ts` forces `NODE_ENV=test`, `FRONTEND_ORIGINS`, `COOKIE_SECURE` and `TRUST_PROXY_HOPS` anyway.
+- **Mongo service health check** uses `db.adminCommand({ ping: 1 })` instead of `db.adminCommand('ping')`, to avoid nesting a third quote level inside the `--health-cmd` option string. Same command.
+- **README Quick start** generates each secret with the `node -e` command and asks the reader to paste them into `.env`. A one-line `node -e … > .env` was not used: Windows PowerShell 5.1's `>` writes UTF-16, which Compose can't read. Commands are marked as POSIX shell.
+- **README local dev, step 1:** create the root `.env` first. Found while checking the commands: `docker compose config --quiet mongo` without the JWT variables fails with `required variable JWT_ACCESS_SECRET is missing a value`, because Compose interpolates the whole file even when starting one service.
+- **README limitations as they stand**, beyond the seven in `specs/07` §1: the failed-logout case (kept), no absolute session lifetime, Swagger enabled in Compose, the shadcn CLI's dev-only `npm audit` findings, and React Router 7 / jsdom 29 because the next majors need Node ≥ 22.22. The grace-window entry lists three concrete effects: replays inside 10 s aren't flagged; a lost rotation response leads to a family revocation more than 10 s later; and a retry after a grace 200 can still carry the old cookie.
+### Corrections received
+- The Phase 8 prompt set the requirements up front (CI shape and env, workflow validation, README extras, AI.md headings only, acceptance walk, clean-clone test, secret scan, final report, no commit or push). All were followed.
+- The author edited the README after my draft and removed section 12 (Next steps). Kept as is; `specs/07` §1 updated to match.
+- Before committing, the user asked for three things:
+  1. Sync the specs to what shipped (`02` §6 and anything else that drifted). Done; listed under Generated.
+  2. Check import casing for case-sensitive Linux CI and add `.gitattributes` with `* text=auto eol=lf` if missing. Done; results under Commands run.
+  3. Use the commit messages `ci: add GitHub Actions workflow` and `docs: write README, add AI.md headings, sync specs, log phase 8` (no scope), then commit without pushing. `.gitattributes` goes in the `ci` commit, since it exists for the Linux runner; the commit body says so.
+### Commands run
+- `git ls-remote --tags` and `gh api repos/actions/{checkout,setup-node}/releases` → tags and dates above.
+- `docker run --rm -v <repo>:/repo -w /repo rhysd/actionlint:1.7.12 -color=false -verbose` → 1 file, 0 errors, exit 0. This is static validation only: the workflow has not run on GitHub.
+- CI steps locally, with the CI job env exported (npm 11.21.1, Node 22.16.0):
+  - server: `npm ci` → 0 vulnerabilities; `lint`, `typecheck` → exit 0; `npm test` → 6 files, 85 passed; `npm run test:e2e` (Compose Mongo, `easygen_auth_test`) → 4 files, 63 passed; `build` → exit 0.
+  - client: `npm ci`; `lint`, `typecheck` → exit 0; `npm test` → 6 files, 56 passed; `build` → exit 0.
+  - `npm audit`: server 0; client `--omit=dev` 0, full 7 high (shadcn CLI chain, unchanged).
+- Mermaid: in a scratchpad project, `npm install --ignore-scripts mermaid@11.17.2 jsdom@29.1.1`, then `mermaid.parse()` on the block extracted from the README → `{"diagramType":"sequence"}`. A deliberately broken copy was rejected (`Parse error on line 17`). Scratchpad deleted.
+- **Clean-clone test:**
+  - Setup:
+    - `docker compose down` on the main stack, to free ports 8080 and 27017; its volume was kept.
+    - `git clone` of the local repo at `2700220` into the scratchpad. The three new files (`README.md`, `AI.md`, `ci.yml`) were copied in, since they are uncommitted.
+  - Quick start, as written:
+    - `cp .env.example .env`, then the `node -e` command twice. The two 64-character values were written into `.env` with `sed` (the equivalent of pasting) and never printed.
+    - `docker compose build --no-cache` (added, so that cached build layers couldn't hide a problem) → both images built in 65 s. In the build log, the server's `npm ci` reported 0 vulnerabilities and the client's 7 high.
+    - `docker compose up --build` → server healthy, client started; `/api/health` 200 through `:8080`.
+  - Through `:8080`:
+    - The README curl commands verbatim: signup → 201 with `access_token` (`Max-Age=900; Path=/; HttpOnly; SameSite=Lax`) and `refresh_token` (`Max-Age=604800; Path=/api/v1/auth; HttpOnly; SameSite=Strict`), `Cache-Control: no-store`; `/me` → 200 `{ user }`.
+    - Refresh → 200. Logout → 200, clearing both cookies with matching paths. `/me` afterwards → 401.
+    - A POST without `Origin` → 403 `ErrorResponse` with `requestId`.
+    - `/` and `/app` → 200 `text/html`; `/api/docs` 200; `/api/v1/health` 404.
+  - Browser (Claude in Chrome), `http://localhost:8080/signup`:
+    - Signup → `/app` showing `Welcome to the application.` and `Signed in as Clean Clone`.
+    - Log out → `/signin`.
+    - `/app` again → exactly `GET /api/v1/auth/me` 401 and `POST /api/v1/auth/refresh` 401 → `/signin`.
+  - The clone's server log had 0 matches for `eyJ`, `argon2id` or the test password. Events: `user_signed_up` ×2, `session_rotated` ×1, `user_logged_out` ×2.
+  - Local dev, in the same clone:
+    - `docker compose down`, then `docker compose up -d mongo`.
+    - `cd server && cp .env.example .env && npm ci && npm run start:dev` → `Nest application successfully started`.
+    - `cd client && npm ci && npm run dev` → Vite ready.
+    - Through `:5173`: `/api/health` 200. The README signup → 409, because `ada@example.com` was already created in the same volume by the Quick start check (expected). With another email → 201, then `/me` → 200. Logout 200; `/`, `/signin` and `/api/docs` → 200.
+    - TaskStop left the node processes running on Windows. The three `node.exe` processes whose command line pointed into the clone were stopped with `Stop-Process`.
+  - Tests in the clone: `cd server && npm test && npm run test:e2e` → 85 and 63 passed; `cd client && npm test` → 56 passed.
+  - Teardown: `docker compose down -v --rmi local` in the clone (its containers, volume and images removed); clone directory deleted. Main stack restarted with `docker compose up -d` → healthy.
+- **Secret scan:**
+  - `git log --all --name-only`: the only `.env*` files ever committed are the three `.env.example` files. No `node_modules`, `dist`, coverage, `*.tsbuildinfo`, logs or DB data were ever committed.
+  - `git log --all -p`: no `$argon2id$` hash. The two JWT-shaped strings are test fixtures with fake signatures (`.sig`, `.access-signature`/`.refresh-signature`). Every secret assignment is a placeholder or a test or CI value.
+  - `zricethezav/gitleaks:v8.30.1 git /repo` → 14 commits, 5 findings, all false positives: the two `.env.example` placeholders `replace-with-a-generated-secret-of-32-plus-chars-1` and the three fake-signature JWT fixtures (`client/src/features/auth/forms.test.tsx:240`, `server/src/common/logger.options.spec.ts:7,9`).
+  - `gitleaks dir` on the three new files → no leaks.
+  - `git status --ignored`: `.env` and `server/.env` are ignored and untracked.
+- `curl :8080/api/docs-json` → 0 matches for `eyJ`, `argon2` or `passwordHash`.
+- **Casing check:**
+  - Neither app sets `forceConsistentCasingInFileNames`; TypeScript 6.0.3 defaults it to true.
+  - Probe: a temporary file in each app imported `./lib/Utils` (client) and `./auth/Password-Rules.js` (server). `tsc -b` and `tsc --noEmit` failed with TS1261/TS1149 ("differs … only in casing"), so `typecheck` catches it even on Windows. Probes deleted.
+  - A scratchpad Node script compared every relative and `@/` import in `server/src`, `server/test`, `client/src` and the Vite/Vitest configs with the exact on-disk names (79 files, 149 imports) → no mismatches. The one unresolved specifier is the Vite raw import `../nginx.conf?raw` (the file exists with matching case). During the probe the same script reported both probes as `CASE MISMATCH`.
+  - `git ls-files` names vs on-disk names → no mismatches (`core.ignorecase=true`).
+- `git ls-files --eol` → 119/119 `i/lf`, so `.gitattributes` changes no committed content.
+### Not done / limitations
+- The workflow has not run on GitHub (no push). It is validated by actionlint and by running the same steps locally only. Whether the `mongo:7` service health check and the `docker` job behave as intended on GitHub-hosted runners is unconfirmed until the first push.
+- README script table: checked against both `package.json` files. `start:prod`, `preview`, `test:cov` and `test:watch` were not executed this phase.
+- The README commands were run in Git Bash only, not in PowerShell or on macOS/Linux.
+- Manual checks from `specs/06` §5 still open for the user: cookies inspected in Chrome DevTools (the extension can't read HttpOnly cookies) and the DevTools Console for CSP messages at initial load.
+- `AI.md` content is for the author to write.
+- Committed as two commits on the user's instruction (`ci: …`, `docs: …`); not pushed.

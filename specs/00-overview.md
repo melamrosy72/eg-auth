@@ -17,8 +17,9 @@ Priority order:
 
 ### Runtime and package management
 - Node.js 22 (`.nvmrc`), npm.
+- Both `package.json` files pin npm exactly with `"packageManager": "npm@11.21.1"`. The Dockerfiles and CI install that version before `npm ci`. npm 11 is needed to change dependencies: npm 10.9.2 crashes on Vite's optional peers and drops the lockfile's `libc` fields.
 - Two independent apps with separate `server/package-lock.json` and `client/package-lock.json`. No workspaces and no root lockfile.
-- Current stable package versions. Commit both lockfiles. Use `npm ci` in CI and in documented clean installs.
+- Current stable package versions, **at least 14 days old** (minimum-age policy). A version newer than that is pinned exactly to the newest older release, and the README lists the pins. A major that needs a newer Node 22 release than the local one is skipped (React Router 7 and jsdom 29 instead of 8 and 30). Commit both lockfiles. Use `npm ci` in CI and in documented clean installs.
 - TypeScript `strict: true` in both apps.
 
 ### Frontend (`client/`)

@@ -4,7 +4,8 @@
 
 - Polished, restrained SaaS style: Tailwind v4 with shadcn/ui on the default theme, and a centred card layout.
 - Visible focus, error, and loading states. No elaborate animation.
-- shadcn components: `button input label card form` (or `field` if that is what the current CLI provides), `alert`, `sonner`. Generate them with the CLI only; never hand-write them.
+- shadcn components: `button input label card field alert sonner` (plus `separator`, a dependency of `field`). The default style is `base-nova` (Base UI), and `form` resolves to no files for it, so forms use `field`. Generate them with the CLI only; never hand-write or edit them.
+- Mount `<Toaster theme="light" />` once, in `main.tsx`.
 - Setup gotchas:
   - Define the `@/*` alias in `tsconfig.json`, `tsconfig.app.json`, **and** `vite.config.ts`.
   - Tailwind v4 uses `@import "tailwindcss"` in CSS. There is no `tailwind.config.js` and no PostCSS config.
@@ -18,6 +19,8 @@
 | `/signin` | `PublicOnlyRoute` | SignInPage |
 | `/app` | `ProtectedRoute` | AppPage |
 | `*` | — | NotFoundPage, with a link home |
+
+Pages are lazy-loaded (`React.lazy` inside one `<Suspense>` whose fallback is the full-screen spinner). `AuthProvider`, the interceptor, and the guards stay in the main bundle, so the `/me` check starts before any page chunk loads.
 
 ## 3. Forms
 
@@ -53,6 +56,7 @@ Both forms share these behaviours:
 - `<h1>` with exactly `Welcome to the application.`
 - `Signed in as {name}` underneath.
 - A Logout button with a pending state.
+- If the logout request fails (network error or any 5xx), auth is still cleared and the user lands on `/signin`, with the toast `We couldn't confirm sign-out with the server. You may still be signed in on this device. Please try again.` One message for every failure: on a network error or a proxy 502/503/504 no clearing `Set-Cookie` reaches the browser, so the session may still be active.
 
 ## 5. Auth state and the Axios instance
 
@@ -68,7 +72,7 @@ Both forms share these behaviours:
    - `/auth/logout`.
 
    And the request has not been retried yet (`config._retry !== true`).
-2. **Single-flight.** If a refresh is already in flight, await the same shared promise. Never start a second refresh concurrently. Reset the shared promise once it settles.
+2. **Single-flight.** If a refresh is already in flight, await the same shared promise. Never start a second refresh concurrently. Reset the shared promise once it settles. The promise is module-level, not per interceptor install: Axios fixes a request's interceptor chain when the request starts, so under StrictMode a request from the first mount still runs through the ejected handler.
 3. If refresh succeeds (200, with or without new cookies), set `_retry = true` and retry the original request **once**.
 4. If refresh returns **401**, call `onSessionExpired()`: set the auth state to `unauthenticated` and let the guards redirect. Reject the original request.
 5. If refresh fails with **429, 5xx, or a network error**, do **not** clear the auth state. Reject with that error so the UI shows a retryable state.
@@ -81,8 +85,9 @@ Both forms share these behaviours:
   - 401 → `unauthenticated`.
   - Anything else → `error`, with a `retry()` function.
 - `signIn` / `signUp` set `authenticated` and the user from the response.
-- `logout()` calls the API, then always clears the state.
-- **Stale responses after logout.** Keep a `sessionEpoch` counter and increment it on logout. Ignore any `/me` response that started under an older epoch, so a stale response can't restore auth after logout.
+- `logout()` calls the API, then always clears the state (in `finally`) and rethrows a failure, so the page can show the toast (§4).
+- Errors are normalised with `toApiError()` in `catch` blocks, not in a response interceptor, so the refresh interceptor sees the raw `AxiosError`.
+- **Stale responses after logout.** Keep a `sessionEpoch` counter. Increment it on every `/me` load, on signin/signup success, at the start of logout, and in `onSessionExpired`. Ignore any `/me` response that started under an older epoch, so a stale response can't restore auth after logout.
 - React StrictMode double-mounts in dev. The single-flight refresh and the epoch guard must make this harmless.
 
 ### Route guards
@@ -90,7 +95,10 @@ Both forms share these behaviours:
   - `loading` → full-screen spinner (`role="status"`). Never render protected content before the check completes.
   - `unauthenticated` → `<Navigate to="/signin" replace state={{ from: location }} />`.
   - `error` → a retry panel.
-- `PublicOnlyRoute`: the inverse. `authenticated` → `<Navigate to="/app" replace />`. Same loading behaviour.
+- `PublicOnlyRoute`: the inverse. Same loading behaviour.
+  - `authenticated` → `<Navigate to={state.from ?? '/app'} replace />`. This is also how signin and signup navigate: the forms don't call `navigate()`, so they can't race the guard. `from` is read only from router history state (set by `ProtectedRoute`), never from the URL.
+  - `error` → render the form anyway.
+- **Principle: public pages fail open, protected pages fail closed.** On a `/me` error (5xx, 429, network) a public page reveals nothing, so it renders; a protected page shows the retry panel.
 
 ## 6. Accessibility and usability
 

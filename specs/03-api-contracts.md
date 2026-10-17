@@ -28,6 +28,10 @@ These apply to every endpoint where relevant and are not repeated per endpoint:
 | 403 | `OriginGuard` rejected an unsafe-method request (`04` §5) | `Invalid request origin` |
 | 429 | rate limit exceeded | `Too many requests, please try again later` |
 | 500 | unexpected | `Internal server error` |
+| 400 | malformed JSON body | `Malformed JSON request body` (`04` §7) |
+| 413 | JSON body over 10 kB | `Payload Too Large` |
+
+Every `/api/v1/auth/*` response carries `Cache-Control: no-store` (`04` §8) and an `x-request-id` header (`04` §7).
 
 ## 2. `POST /api/v1/auth/signup` (public; origin-checked; throttled)
 

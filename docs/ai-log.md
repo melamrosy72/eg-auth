@@ -302,3 +302,109 @@
 - jsdom only: no layout, 360px width or real focus-ring checks.
 - The new test file takes about 16 s, mostly typing with user-event.
 - Committed after the wording change, on the user's instruction.
+
+## Phase 7 — Containers (2026-10-17)
+### Generated
+- `server/Dockerfile`: two stages on `node:22-alpine`. The build stage installs the npm from `packageManager`, then runs `npm ci`, `npm run build` and `npm prune --omit=dev`. The runtime stage has `NODE_ENV=production` and copies `package.json` (needed for `"type": "module"`), the pruned `node_modules` and `dist`. It runs as `USER node` with `CMD ["node", "dist/main.js"]`.
+- `server/.dockerignore`, `client/.dockerignore`: `node_modules`, `dist`, `coverage`, `.env*`, `*.tsbuildinfo`, `*.log`.
+- `client/Dockerfile`: builds with `node:22-alpine` (pinned npm, `npm ci`, `npm run build`) and serves `dist` from `nginx:alpine`.
+- `client/nginx.conf`:
+  - SPA fallback (`try_files $uri /index.html`).
+  - `/api/` → `proxy_pass http://server:3000` with no URI part, so the prefix is kept; sets `Host`, `X-Real-IP`, `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`. No `proxy_cookie_*` directives.
+  - `/assets/`: `Cache-Control: public, max-age=31536000, immutable`. Everything else, including `index.html`: `no-cache`.
+  - gzip on; `server_tokens off`; security headers on the SPA (see Decisions).
+- `compose.yaml`:
+  - `mongo:7` with the `mongosh` ping healthcheck, named volume `mongo-data` and port `127.0.0.1:27017:27017`.
+  - `server`: `depends_on` mongo `service_healthy`, a `wget` healthcheck on `/api/health` (added at review), no published port. Env as in `specs/02` §6; secrets come from `${JWT_*:?set in .env}`.
+  - `client`: port `8080:80`, `depends_on` server `service_healthy` (added at review).
+  - `restart: unless-stopped` on all three services (added at review).
+- Root `.env.example`: the two JWT secret placeholders, plus the command that generates them.
+- `"packageManager": "npm@11.21.1"` in `server/package.json` and `client/package.json` (Phase 2 review note 3).
+- `client/src/csp.test.ts` (one test; see Decisions).
+### Decisions
+- **npm pin in Dockerfiles:** `npm install -g "$(node -p "require('./package.json').packageManager")"` runs before `npm ci`, so `package.json` is the only place the version is written. Verified that `npm -v` prints `11.21.1` in both build stages.
+- **argon2 on Alpine:** kept `node:22-alpine`. `argon2@0.45.1` ships `prebuilds/linux-x64/argon2.musl.node`, and the image loads it (proof under Commands run). No switch to `node:22-slim`.
+- **Runtime image files are root-owned** (no `--chown`), so the `node` process can read the app but not modify it. The runtime stage has no npm step.
+- **`*.tsbuildinfo` in `.dockerignore`:** `server/tsconfig.json` has `incremental: true`, and `nest build` deletes `dist` first. A copied tsbuildinfo could make `tsc` treat the output as up to date and emit nothing. This is a known Nest/tsc interaction; I didn't reproduce it here.
+- **Where the Nginx security headers go:** they are set only in the SPA locations (`/` and `/assets/`). There are no server-level `add_header` directives. A location with its own `add_header` doesn't inherit them, and `/api/` must keep Helmet's headers without a second CSP: browsers enforce every CSP header they receive. Verified: `/api/docs` returns exactly one CSP (Helmet's), and Swagger UI renders through `:8080`.
+- **SPA headers:**
+  - `X-Content-Type-Options: nosniff`.
+  - `Referrer-Policy: no-referrer`.
+  - `X-Frame-Options: DENY` plus `frame-ancestors 'none'` (the SPA is never framed).
+  - CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'sha256-…'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
+  - `/assets/` only sends `nosniff` with its cache header, because CSP, frame and referrer policies apply to documents.
+- **CSP allowance (the only one):** `style-src` adds `'sha256-StEaX+se6YS7pqjzrzMIA0KaX9zF/8zAhvQXZAe5epY='`.
+  - Why: `sonner` 2.0.8 inserts one `<style>` element (14,916 chars) when it is imported (`__insertCSS` in `node_modules/sonner/dist/index.mjs`). The strict `style-src 'self'` blocked it: in Chrome its `sheet` was `null`.
+  - Why a hash and not `'unsafe-inline'`: the hash allows only that one block. The hash computed in Chrome from the page's `<style>` equalled the one computed in Node from sonner's dist.
+  - Guard: `sonner` is pinned exactly. `src/csp.test.ts` imports sonner in jsdom, hashes the `<style>` it inserts, and expects `nginx.conf` to contain that hash. A mutation check (one character of the hash changed) fails it.
+  - No other allowance was needed. Geist fonts and all JS/CSS load from `/assets/`, and the app uses no images.
+- `/assets/` uses `try_files $uri =404`: a missing hashed file returns 404 instead of `index.html` with a one-year cache (`/assets/nope.js` → 404).
+- `gzip_types text/css application/javascript image/svg+xml` (`text/html` is always included). API JSON isn't compressed: the responses are tiny.
+- The client port is published as `8080:80` (all interfaces), as written in `specs/02` §6. Only Mongo is bound to `127.0.0.1`.
+- Root `.env` for the checks: two random 64-character secrets, generated locally with the command from `.env.example`. The file is gitignored (`git check-ignore` → `.gitignore:8:.env`) and not staged.
+### Corrections received
+- The Phase 7 prompt set watch points up front: npm pin; argon2 proof through a real signup; server image requirements; Nginx behaviour and security headers with zero CSP violations; Compose settings; checks 1–4 through `:8080`; image sizes. All were followed.
+- Phase 7 review: the user asked me to fix two limitations I had listed, instead of documenting them. Both are fixed and no longer listed under limitations:
+  1. Server healthcheck: `wget -q -O /dev/null http://127.0.0.1:3000/api/health` (busybox wget in `node:22-alpine`), every 5 s, 10 retries. `client` now `depends_on` server with `condition: service_healthy`. Previously `/api` could return 502 for a few seconds after `up`.
+  2. Nginx re-resolution: `resolver 127.0.0.11 valid=10s ipv6=off`, and `proxy_pass $api_upstream` with `set $api_upstream http://server:3000` (no URI part, so the `/api` prefix is kept). Previously Nginx resolved `server` once at startup and kept the old IP after the server container was recreated.
+  3. `restart: unless-stopped` on mongo, server and client.
+
+  This deviates from `specs/02` §6, which reads `client: … depends_on: server` and `proxy_pass http://server:3000`; it was done on the user's instruction. The spec files are unchanged.
+### Commands run
+- `docker rm -f easygen-mongo` → removed (as instructed before the phase).
+- `npm pkg set packageManager=npm@11.21.1` in `server/` and `client/`.
+- `docker compose config --quiet` → ok. `docker compose build` → both images built. `docker compose build --no-cache server` → `npm ci` added 396 packages, 0 vulnerabilities. npm 11.21.1 warns that `argon2` and `@scarf/scarf` install scripts are "not yet covered by allowScripts"; argon2 loads its prebuilt binary at runtime regardless.
+- `docker build --target build` for each app + `npm -v` → `11.21.1` in both. Node in the image: `v22.23.3`.
+- `docker compose up -d` → mongo healthy, then server and client started.
+  - Server log: `COOKIE_SECURE=false in production — only acceptable for local HTTP (Compose)` at `warn` (level 40).
+  - `docker compose exec server id` → `uid=1000(node)`. `/app` is root-owned. `node_modules` has no `vitest` and no `pino-pretty`.
+  - `node -e "import('argon2')…hash"` inside the container → `$argon2id$…`.
+- curl through `http://localhost:8080`:
+  - `POST /api/v1/auth/signup` (with `Origin: http://localhost:8080`) → 201, `Cache-Control: no-store`.
+    - `access_token`: `Max-Age=900; Path=/; HttpOnly; SameSite=Lax`.
+    - `refresh_token`: `Max-Age=604800; Path=/api/v1/auth; HttpOnly; SameSite=Strict`.
+  - `GET /api/v1/auth/me` with that jar → 200 `{ user }`, `Cache-Control: no-store`.
+  - `/api/health` → 200 `mongodb: up`; `/api/v1/health` → 404; `/api/docs` → 200 `text/html` with one CSP header (Helmet's).
+  - `/` → the SPA headers above. `/app` → 200 `text/html` (fallback).
+  - An `/assets/*.js` file → `Cache-Control: public, max-age=31536000, immutable`, `Content-Encoding: gzip` with `Accept-Encoding: gzip`. `index.html` → `no-cache`, gzip. `/assets/nope.js` → 404.
+- **Rate limit behind Nginx (check 3):** 11 `POST /api/v1/auth/signin` requests, each with a different spoofed `X-Forwarded-For: 203.0.113.N` → `401` ×10, then `429` on the 11th.
+  - The server log shows `x-forwarded-for: "203.0.113.N, 172.24.0.1"`: Nginx appended the real peer. With `trust proxy` 1, `req.ip` is that last entry.
+  - Server log scan: 0 matches for `eyJ`, the test password or `argon2id`. `[Redacted]` appears for the cookie header. Events: `user_signed_up` ×1, `signin_failed` ×10.
+- Browser (Claude in Chrome) at `http://localhost:8080`, production build (no StrictMode):
+  - Detecting CSP violations: the extension's console reader showed only other extensions' messages and no CSP reports, even while sonner's style was being blocked. So violations were checked another way:
+    - every app stylesheet has a non-null `sheet`: `index-*.css` 60 rules, sonner's `<style>` 97 rules (it was `null` before the hash was added);
+    - a `securitypolicyviolation` listener was registered after each load and recorded nothing during signup, logout, the toast and signin;
+    - Geist (latin) loaded.
+    - Violations during the initial document load before the listener was attached are covered only by the `sheet` checks.
+  - Check 1: signup → 201 → `/app` with `Welcome to the application.` and `Signed in as Browser Compose`. `localStorage` empty; `sessionStorage` had only a `JOBRIGHT_*` key from a browser extension. Logout → 200 → `/signin`. Then `/app` → exactly `me` 401 and `refresh` 401 → `/signin`.
+  - Toast: server container stopped → signin → Nginx 502 (`connect() failed (113: Host is unreachable)`) → toast `Something went wrong, please try again`, styled by sonner's CSS (`position: absolute`, white background), no violations. Server restarted → signin 200 → `/app`.
+  - Check 2 (expired access token): signed in at 23:44:49Z and waited 15.5 minutes, so the browser dropped the `access_token` cookie when its `Max-Age=900` ran out. This replaces deleting the cookie in DevTools: the extension can't touch HttpOnly cookies. Reloading `/app` at 00:00:25Z made exactly three API requests: `GET /api/v1/auth/me` 401 → `POST /api/v1/auth/refresh` 200 → `GET /api/v1/auth/me` 200, and `Welcome to the application.` rendered. The server logged `session_rotated` ×1.
+  - The test users `compose.check@example.com` and `browser.compose@example.com` and their sessions were deleted from the Compose database afterwards.
+  - `/api/docs` through `:8080` → Swagger UI with all 6 operations; its stylesheet loaded (1579 rules).
+- Checks after the changes:
+  - client: `npm run lint` → exit 0; `npm run typecheck` → exit 0; `npm test` → 6 files, 56 passed (55 + the CSP test); `npm run build` → exit 0.
+  - server: `npm run lint` → exit 0; `npm run typecheck` → exit 0; `npm test` → 6 files, 85 passed; `npm run test:e2e` (against the Compose Mongo, database `easygen_auth_test`) → 4 files, 63 passed; `npm run build` → exit 0.
+- Image sizes (`docker images`): `easygenerator-auth-server` 402 MB, `easygenerator-auth-client` 103 MB.
+  - Server breakdown: Node binary 123 MB, prod `node_modules` 137 MB, global npm 18 MB, `dist` 0.4 MB.
+  - The largest prod packages: `typescript` 23.6 MB (a production dependency of `@nestjs/swagger@12.0.2`, per `npm ls --omit=dev`), `es-toolkit` 17.8 MB, `libphonenumber-js` 12.3 MB (via `class-validator`), `swagger-ui-dist` 11.4 MB, `rxjs` 11.4 MB.
+- After the review fixes (see Corrections received):
+  - `docker compose config --quiet` → ok. `docker compose down`, `docker compose build`, `docker compose up -d` → Compose started the client only after `server-1 Healthy`. Requests sent straight after `up` returned: `/api/health` 200, `/api/v1/auth/me` 401, `/` 200. No 502.
+  - `docker compose up -d --force-recreate server`, run twice:
+    - Plain run: the new container got the same IP (172.24.0.3), so this alone doesn't prove re-resolution.
+    - Second run: stopped the server and started a throwaway `alpine:3` container on the Compose network, which took the freed 172.24.0.3. Recreating the server then gave it 172.24.0.5.
+    - Polling `/api/health` through `:8080` → one 502, then 200. The Nginx error log shows that 502 was `Connection refused` from upstream `172.24.0.5` while the server was still booting, so Nginx had already resolved the new IP.
+    - The client container's `StartedAt` was the same before and after (`00:28:32Z`), so it was not restarted. The throwaway container was removed.
+  - `docker inspect` → restart policy `unless-stopped` on mongo, server and client.
+  - Smoke test through `:8080` with curl:
+    - signup → 201;
+    - `/me` → 200 `{ user }`;
+    - logout → 200 with clearing `Set-Cookie` for `access_token` (`Path=/`) and `refresh_token` (`Path=/api/v1/auth`);
+    - after logout, `/me` → 401 and refresh → 401.
+    - The smoke user and its session were deleted afterwards.
+  - `npx vitest run src/csp.test.ts` → 1 passed. The CSP line in `nginx.conf` is unchanged.
+### Not done / limitations
+- Cookie attributes were read from `Set-Cookie` with curl; the cookies were not opened in Chrome DevTools (the extension can't read HttpOnly cookies).
+- Manual DevTools check still open for the user: the Console tab for CSP messages at initial page load.
+- README is Phase 8; nothing in it changed this phase. The two fixed limitations had been listed only in this log, never in the README.
+- `specs/02` §6 still describes the pre-review `depends_on` and `proxy_pass`; see Corrections received.
+- Committed as a single `build(infra)` commit with this entry, on the user's instruction. It touches both `client/` and `server/` files, an exception to the one-app-per-commit rule in AGENTS.md.
